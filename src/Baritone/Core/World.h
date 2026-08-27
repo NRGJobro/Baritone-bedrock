@@ -24,6 +24,9 @@ struct PathOptions {
     bool allowDiagonal = true;
     bool allowAscend = true;
     bool allowFall = true;
+    bool allowParkour = true;
+    bool allowParkourAscend = true;
+    int maxParkourDistance = 4;
     int maxFallHeight = 3;
     std::size_t maxExpandedNodes = 60000;
     std::size_t nodesPerTick = 350;

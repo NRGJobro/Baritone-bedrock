@@ -107,6 +107,56 @@ void exposesCalculationPaths() {
     assert(!finder.getMostRecentPath().empty());
 }
 
+void crossesOneBlockGapWithParkour() {
+    FakeWorld world;
+    for (int z = -8; z <= 8; ++z)
+        world.solid.erase({2, -1, z});
+
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowFall = false;
+    options.allowParkour = true;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{4, 0, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(std::ranges::any_of(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::Parkour;
+    }));
+}
+
+void respectsParkourToggle() {
+    FakeWorld world;
+    for (int z = -8; z <= 8; ++z)
+        world.solid.erase({2, -1, z});
+
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowFall = false;
+    options.allowParkour = false;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{4, 0, 0}), options);
+    assert(run(finder, world) != baritone::SearchStatus::Found);
+}
+
+void crossesThreeBlockGapWithSprintParkour() {
+    FakeWorld world;
+    for (int x = 2; x <= 4; ++x)
+        for (int z = -8; z <= 8; ++z)
+            world.solid.erase({x, -1, z});
+
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowFall = false;
+    options.allowParkour = true;
+    options.maxParkourDistance = 4;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{6, 0, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(std::ranges::any_of(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::Parkour;
+    }));
+}
+
 } // namespace
 
 int main() {
@@ -117,6 +167,9 @@ int main() {
     avoidsHazards();
     returnsPartialAtUnloadedBoundary();
     exposesCalculationPaths();
+    crossesOneBlockGapWithParkour();
+    respectsParkourToggle();
+    crossesThreeBlockGapWithSprintParkour();
     std::cout << "Baritone core tests passed\n";
     return 0;
 }

@@ -35,8 +35,13 @@ glm::vec2 Actor::getRotation() {
 }
 
 void Actor::setRotation(const glm::vec2& value) {
-    if (const auto rotation = this->tryGet<ActorRotationComponent>())
+    if (const auto rotation = this->tryGet<ActorRotationComponent>()) {
+        // Keep Bedrock's interpolation endpoints together when automation turns
+        // the player. Updating only the current value makes the renderer blend
+        // back toward a stale yaw every frame, which appears as rotation jitter.
+        rotation->previousRotation = value;
         rotation->rotation = value;
+    }
 }
 
 bool Actor::isOnGround() const {

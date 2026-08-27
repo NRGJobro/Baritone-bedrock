@@ -42,8 +42,10 @@ void ClickGui::render() {
     modulesSectionPos = {guiXpos + guiWidth / 5.f, guiYpos + guiHeight / 10.f};
     modulesSectionSize = {guiXpos + guiWidth - modulesSectionPos.x, guiYpos + guiHeight - modulesSectionPos.y};
     moduleSize = {(modulesSectionSize.x - (modulesPerRow + 1) * 10.f) / modulesPerRow, (modulesSectionSize.y - (modulesPerCol + 1) * 10.f) / modulesPerCol};
-    settingsPanelPos = {modulesSectionPos.x + modulePadding * 2.f + moduleSize.x, modulesSectionPos.y + modulePadding};
-    settingsPanelSize = {modulesSectionSize.x - moduleSize.x - modulePadding * 3.f, modulesSectionSize.y - modulePadding * 2.f};
+    // Settings are a modal view: cover the entire content area so module cards cannot
+    // remain visible or receive input behind the panel.
+    settingsPanelPos = {guiXpos + modulePadding, modulesSectionPos.y + modulePadding};
+    settingsPanelSize = {guiWidth - modulePadding * 2.f, guiHeight - (settingsPanelPos.y - guiYpos) - modulePadding};
 
     if (!builtMeshes || lastClientUIScreenSize != clientUIScreenSize) {
         buildMeshes();
@@ -104,6 +106,9 @@ void ClickGui::render() {
     DrawUtils::getScreenContext()->setClippingRectangle(guiXpos, modulesSectionPos.y + 0.5f, guiWidth, guiHeight - (modulesSectionPos.y + 0.5f - guiYpos));
 
     for (auto& mod : g_modMgr.getSortedModules()) {
+        if (baritoneSettingsExpanded)
+            continue;
+
         float posX = modulesSectionPos.x + modulePadding + column * (moduleSize.x + modulePadding);
 
         if (column >= modulesPerRow) {
@@ -232,6 +237,7 @@ void ClickGui::render() {
             Toggle{"Water", &pathOptions.allowWater},
             Toggle{"Step Up", &pathOptions.allowAscend},
             Toggle{"Drops", &pathOptions.allowFall},
+            Toggle{"Parkour", &pathOptions.allowParkour},
             Toggle{"Sprint", &executionOptions.sprint},
             Toggle{"Auto Replan", &controller.getReplanWhenStuck()}
         };
@@ -287,6 +293,17 @@ void ClickGui::render() {
 
         drawColumn("MOVEMENT", movementToggles, settingsPanelPos.x + 14.f);
         drawColumn("VISUALS", visualToggles, settingsPanelPos.x + 14.f + columnWidth + columnGap);
+
+        const std::string closeLabel = "Close settings (ESC)";
+        const float closeX = settingsPanelPos.x + settingsPanelSize.x - DrawUtils::getTextWidth(closeLabel, 0.7f) - 16.f;
+        const float closeY = settingsPanelPos.y + settingsPanelSize.y - 28.f;
+        const glm::vec4 closeHitbox{closeX - 8.f, closeY - 5.f, DrawUtils::getTextWidth(closeLabel, 0.7f) + 16.f, 22.f};
+        if (shouldClick && mousePos.x >= closeHitbox.x && mousePos.x < closeHitbox.x + closeHitbox.z &&
+            mousePos.y >= closeHitbox.y && mousePos.y < closeHitbox.y + closeHitbox.w) {
+            baritoneSettingsExpanded = false;
+            shouldClick = false;
+        }
+        DrawUtils::drawText(closeLabel, {closeX, closeY}, {1.f, 0.45f, 0.45f, 1.f}, 0.7f);
     }
 
     shouldRightClick = false;
@@ -309,8 +326,12 @@ void ClickGui::onKey(int key, bool pressed, bool& cancel) {
     cancel = true;
 
     if (key == VK_ESCAPE) {
-        g_Client.clickGuiOpened = false;
-        MC::getMinecraftGame()->grabMouse();
+        if (baritoneSettingsExpanded)
+            baritoneSettingsExpanded = false;
+        else {
+            g_Client.clickGuiOpened = false;
+            MC::getMinecraftGame()->grabMouse();
+        }
     }
 }
 
@@ -321,9 +342,9 @@ void ClickGui::onMouse(const int button, const bool pressed, bool& cancel) {
     cancel = true;
 
     if (button == 1)
-        shouldClick = pressed;
+        shouldClick = true;
     else if (button == 2)
-        shouldRightClick = pressed;
+        shouldRightClick = true;
 }
 
 void ClickGui::onWheel(const bool direction, bool& cancel) {
@@ -363,6 +384,15 @@ void ClickGui::buildMeshes() {
             {1.f, 1.f, 1.f, 0.15f}, {1.f, 1.f, 1.f, 0.45f}, outlineSize, 0xF, radius, blend);
 
         tess->end(modMesh);
+    }
+
+    { // Settings panel
+        tess->begin();
+
+        DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, settingsPanelSize.x, settingsPanelSize.y, smoothness,
+            {0.06f, 0.08f, 0.11f, 0.94f}, {0.35f, 0.8f, 1.f, 0.65f}, outlineSize, 0xF, radius, blend);
+
+        tess->end(settingsMesh);
     }
 
     { // Enabled button state background

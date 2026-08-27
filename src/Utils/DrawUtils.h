@@ -15,6 +15,7 @@ public:
     static mce::MaterialPtr* getNameTagDepthTested();
     static mce::MaterialPtr* getSignText();
     static mce::MaterialPtr* getUITextureAndColor();
+    static mce::MaterialPtr* getFullscreenCubeOverlayBlend();
 
     static ScreenContext* getScreenContext();
     static Tessellator* getTessellator();

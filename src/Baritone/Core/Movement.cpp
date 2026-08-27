@@ -1,5 +1,6 @@
 #include "Movement.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <numbers>
@@ -100,6 +101,58 @@ std::vector<Movement> MovementGenerator::getMovements(const IWorld& world, const
             result.push_back({up, MovementType::Swim, 2.4});
         if (swimmable(world, down, options))
             result.push_back({down, MovementType::Swim, 1.8});
+    }
+
+    // Baritone-style cardinal parkour. Distances are source-to-destination:
+    // 2 = one-block gap, 3 = two-block gap, 4 = three-block sprint gap.
+    if (options.allowParkour && !fromWater && canStandAt(world, from, options) &&
+        passable(world.getBlock(from.offset(0, 2, 0)), options)) {
+        static constexpr std::array<std::pair<int, int>, 4> cardinal{{
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1}
+        }};
+        const int maxDistance = std::clamp(options.maxParkourDistance, 2, 4);
+
+        for (const auto [dx, dz] : cardinal) {
+            const auto adjacent = from.offset(dx, 0, dz);
+            // If the adjacent block is walkable, normal traverse is safer.
+            if (canStandAt(world, adjacent, options) || !canOccupy(world, adjacent, options) ||
+                !passable(world.getBlock(adjacent.offset(0, 2, 0)), options))
+                continue;
+
+            for (int distance = 2; distance <= maxDistance; ++distance) {
+                const auto candidate = from.offset(dx * distance, 0, dz * distance);
+                bool clearArc = true;
+                for (int step = 2; step < distance; ++step) {
+                    const auto column = from.offset(dx * step, 0, dz * step);
+                    if (!canOccupy(world, column, options) ||
+                        !passable(world.getBlock(column.offset(0, 2, 0)), options)) {
+                        clearArc = false;
+                        break;
+                    }
+                }
+                if (!clearArc)
+                    break;
+
+                if (canStandAt(world, candidate, options)) {
+                    const auto overshoot = candidate.offset(dx, 0, dz);
+                    const auto overFeet = world.getBlock(overshoot);
+                    const auto overHead = world.getBlock(overshoot.offset(0, 1, 0));
+                    if (passable(overFeet, options) && passable(overHead, options))
+                        result.push_back({candidate, MovementType::Parkour,
+                            static_cast<double>(distance) * (distance == 4 ? 0.82 : 1.0) + 0.75});
+                    break;
+                }
+
+                if (options.allowParkourAscend && distance <= 3) {
+                    const auto raised = candidate.offset(0, 1, 0);
+                    if (canStandAt(world, raised, options) &&
+                        passable(world.getBlock(candidate.offset(0, 3, 0)), options)) {
+                        result.push_back({raised, MovementType::Parkour, static_cast<double>(distance) + 1.15});
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     return result;

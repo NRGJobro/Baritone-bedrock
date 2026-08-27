@@ -27,8 +27,17 @@ class PathExecutor {
     int ticksWithoutProgress = 0;
     bool progressInitialized = false;
     bool controlledMovement = false;
+    std::size_t activeParkourIndex = static_cast<std::size_t>(-1);
+    bool parkourJumpIssued = false;
+    bool parkourWasAirborne = false;
+    bool parkourSprintPrimed = false;
+    int parkourLaunchTicks = 0;
+    bool movementModeCaptured = false;
+    bool previousCameraRelativeMovement = true;
+    bool previousRotationControlledByMovement = false;
 
     void clearInput(LocalPlayer* player);
+    void resetParkourState();
 
 public:
     void begin(std::vector<PathNode> path);

@@ -7,6 +7,7 @@
 #include "../../Utils/TimeUtils.h"
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 namespace {
@@ -15,8 +16,13 @@ void vertex(Tessellator* tessellator, const glm::vec3& origin, const float x, co
     tessellator->vertex(glm::vec3{x, y, z} - origin);
 }
 
-void line(Tessellator* tessellator, const glm::vec3& origin, const glm::vec3& from, const glm::vec3& to) {
+void line(Tessellator* tessellator, const glm::vec3& origin, const glm::vec3& from, const glm::vec3& to,
+    const mce::Color* color = nullptr) {
+    if (color != nullptr)
+        tessellator->color(*color);
     vertex(tessellator, origin, from.x, from.y, from.z);
+    if (color != nullptr)
+        tessellator->color(*color);
     vertex(tessellator, origin, to.x, to.y, to.z);
 }
 
@@ -95,19 +101,21 @@ void renderGoal(Tessellator* tessellator, const glm::vec3& origin, const bariton
 }
 
 void renderRoute(Tessellator* tessellator, const glm::vec3& origin, const std::vector<baritone::PathNode>& path,
-    const std::size_t renderBegin, const bool lineOnly, const bool fade, const mce::Color& color) {
+    const std::size_t renderBegin, const bool lineOnly, const bool fade, const mce::Color& color,
+    const std::size_t renderEnd = std::numeric_limits<std::size_t>::max()) {
     if (path.size() < 2 || renderBegin + 1 >= path.size())
         return;
 
     const std::size_t fadeStart = renderBegin + 10;
     const std::size_t fadeEnd = renderBegin + 20;
 
-    for (std::size_t i = renderBegin, next = renderBegin + 1; i + 1 < path.size(); i = next, next = i + 1) {
+    for (std::size_t i = renderBegin, next = renderBegin + 1;
+         i + 1 < path.size() && i < renderEnd; i = next, next = i + 1) {
         const auto start = path[i].pos;
         auto end = path[next].pos;
         const baritone::BlockPos direction{end.x - start.x, end.y - start.y, end.z - start.z};
 
-        while (next + 1 < path.size() && (!fade || next + 1 < fadeStart)) {
+        while (next + 1 < path.size() && next + 1 < renderEnd && (!fade || next + 1 < fadeStart)) {
             const auto candidate = path[next + 1].pos;
             if (candidate.x - end.x != direction.x || candidate.y - end.y != direction.y || candidate.z - end.z != direction.z)
                 break;
@@ -122,7 +130,6 @@ void renderRoute(Tessellator* tessellator, const glm::vec3& origin, const std::v
             alpha *= i <= fadeStart ? 0.4f : 0.4f * (1.f - static_cast<float>(i - fadeStart) / static_cast<float>(fadeEnd - fadeStart));
         }
 
-        tessellator->color(mce::Color{color.r, color.g, color.b, alpha});
         pathSegment(tessellator, origin, start, end, lineOnly);
     }
 }
@@ -155,29 +162,35 @@ void PathRenderer::render(const std::vector<PathNode>& path, const std::size_t c
 
     const auto origin = MC::getLevelRenderer()->getCameraPos();
     const auto tessellator = DrawUtils::getTessellator();
-    // MCRenderTests' depth-tested name-tag material preserves per-vertex RGB.
-    // selection_overlay resolves these line meshes as black on RenderDragon.
-    // Using untextured UI color material is often more reliable for RGB lines if others fail to render.
-    auto* material = DrawUtils::getUIFillColor(); // Fallback to ui_fill_color since render_chunk_lines was invisible.
-
-    // We also need to make sure DrawUtils has set up the correct blend/color state for shader.
+    // Exact Flow/Borion DrawUtils::drawLine3d path: position-only LineList,
+    // fullscreen_cube_overlay_blend, and RGB from currentShaderColor.
+    auto* material = DrawUtils::getFullscreenCubeOverlayBlend();
 
     if (options.renderGoal && goal != nullptr) {
         DrawUtils::setShaderColor(0.f, 1.f, 0.f, 1.f);
         tessellator->begin(mce::PrimitiveMode::LineList);
-        tessellator->color(mce::Color{0, 255, 0, 255});
         renderGoal(tessellator, origin, goal, options.animatedGoal);
         if (tessellator->getVertices() > 0)
             MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), tessellator, material);
     }
 
     if (options.renderPath && path.size() >= 2) {
-        DrawUtils::setShaderColor(1.f, 0.f, 0.f, 1.f);
+        // The vertex color carries the route palette. Keep the shader multiplier neutral;
+        // a red multiplier here turns every green segment black.
+        DrawUtils::setShaderColor(0.f, 1.f, 0.f, 0.92f);
         tessellator->begin(mce::PrimitiveMode::LineList);
         const std::size_t renderBegin = currentIndex > 3 ? currentIndex - 3 : 0;
-        // Baritone default current path: #FF0000.
-        renderRoute(tessellator, origin, path, renderBegin, options.pathAsLine, options.fadePath, {255, 0, 0, 255});
+        // Traversed/current route is green; future route is red.
+        const std::size_t traversedEnd = std::min(path.size() - 1, currentIndex + 1);
+        renderRoute(tessellator, origin, path, renderBegin, options.pathAsLine, options.fadePath,
+            {0.f, 1.f, 0.f, 0.92f}, traversedEnd);
+        if (tessellator->getVertices() > 0)
+            MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), tessellator, material);
 
+        DrawUtils::setShaderColor(1.f, 0.f, 0.f, 0.92f);
+        tessellator->begin(mce::PrimitiveMode::LineList);
+        renderRoute(tessellator, origin, path, std::max(renderBegin, traversedEnd), options.pathAsLine, options.fadePath,
+            {1.f, 0.f, 0.f, 0.92f});
         if (tessellator->getVertices() > 0)
             MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), tessellator, material);
     }
@@ -186,7 +199,7 @@ void PathRenderer::render(const std::vector<PathNode>& path, const std::size_t c
         // Baritone default best path so far: #0000FF.
         DrawUtils::setShaderColor(0.f, 0.f, 1.f, 1.f);
         tessellator->begin(mce::PrimitiveMode::LineList);
-        renderRoute(tessellator, origin, bestPath, 0, options.pathAsLine, options.fadePath, {0, 0, 255, 255});
+        renderRoute(tessellator, origin, bestPath, 0, options.pathAsLine, options.fadePath, {0.f, 0.f, 1.f, 1.f});
         MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), tessellator, material);
     }
 
@@ -194,8 +207,7 @@ void PathRenderer::render(const std::vector<PathNode>& path, const std::size_t c
         // Baritone default most recently considered path/node: #00FFFF.
         DrawUtils::setShaderColor(0.f, 1.f, 1.f, 1.f);
         tessellator->begin(mce::PrimitiveMode::LineList);
-        renderRoute(tessellator, origin, recentPath, 0, options.pathAsLine, options.fadePath, {0, 255, 255, 255});
-        tessellator->color(mce::Color{0, 255, 255, 255});
+        renderRoute(tessellator, origin, recentPath, 0, options.pathAsLine, options.fadePath, {0.f, 1.f, 1.f, 1.f});
         renderSelectionBox(tessellator, origin, recentPath.back().pos);
         MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), tessellator, material);
     }

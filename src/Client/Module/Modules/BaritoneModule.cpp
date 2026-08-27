@@ -75,7 +75,7 @@ bool BaritoneModule::handleChat(const std::string& message) {
     // server commands such as .warp and .home continue to reach the server.
     static const std::unordered_set<std::string> commands{
         "help", "goto", "goal", "path", "stop", "cancel", "pause",
-        "resume", "status", "water", "fall", "y", "xz", "near"
+        "resume", "status", "water", "fall", "parkour", "y", "xz", "near"
     };
     if (directDotCommand && !commands.contains(command))
         return false;
@@ -83,7 +83,7 @@ bool BaritoneModule::handleChat(const std::string& message) {
     if (command == "help") {
         reply(".goto x y z | .goal x y z | .path | .stop");
         reply(".xz x z | .y level | .near x y z radius");
-        reply(".pause | .resume | .status | .water on/off | .fall 0-20");
+        reply(".pause | .resume | .status | .water on/off | .parkour on/off | .fall 0-20");
         return true;
     }
 
@@ -140,6 +140,17 @@ bool BaritoneModule::handleChat(const std::string& message) {
         controller.getOptions().allowFall = height > 0;
         controller.getOptions().maxFallHeight = height;
         reply("Maximum fall height set to " + std::to_string(height) + ".");
+        return true;
+    }
+
+    if (command == "parkour" && args.size() == 2) {
+        const auto value = lower(args[1]);
+        if (value != "on" && value != "off") {
+            reply("Usage: .parkour on/off");
+            return true;
+        }
+        controller.getOptions().allowParkour = value == "on";
+        reply("Parkour " + value + ".");
         return true;
     }
 
