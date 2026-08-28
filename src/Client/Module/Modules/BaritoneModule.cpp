@@ -1,6 +1,7 @@
 #include "BaritoneModule.h"
 
 #include "../../../SDK/MC.h"
+#include "../../../Baritone/Core/AdvancedGoals.h"
 
 #include <charconv>
 #include <sstream>
@@ -28,9 +29,9 @@ std::string lower(std::string value) {
 
 } // namespace
 
-BaritoneModule::BaritoneModule() : Module("Baritone pathfinding for Minecraft Bedrock") {}
+BaritoneModule::BaritoneModule() : Module("Limiter pathfinding for Minecraft Bedrock") {}
 
-std::string BaritoneModule::getName() { return "Baritone"; }
+std::string BaritoneModule::getName() { return "Limiter"; }
 
 void BaritoneModule::onEnable() {
     reply("Enabled. Use .help for commands.");
@@ -47,6 +48,18 @@ void BaritoneModule::onTick() {
     }
 }
 
+void BaritoneModule::onPostTick() {
+    controller.postTick();
+}
+
+void BaritoneModule::onBeforeRenderLevel() {
+    controller.beginVisualRotationRender();
+}
+
+void BaritoneModule::onAfterRenderLevel() {
+    controller.endVisualRotationRender();
+}
+
 void BaritoneModule::onRenderLevel() {
     controller.render();
 }
@@ -54,7 +67,11 @@ void BaritoneModule::onRenderLevel() {
 bool BaritoneModule::handleChat(const std::string& message) {
     std::string commandLine;
     bool directDotCommand = false;
-    if (message.starts_with(".b "))
+    if (message.starts_with(".l "))
+        commandLine = message.substr(3);
+    else if (message == ".l")
+        commandLine = "help";
+    else if (message.starts_with(".b "))
         commandLine = message.substr(3);
     else if (message == ".b")
         commandLine = "help";
@@ -71,11 +88,23 @@ bool BaritoneModule::handleChat(const std::string& message) {
 
     const auto command = lower(args[0]);
 
+    if (command == "bridge" && args.size() == 2) {
+        const auto value = lower(args[1]);
+        if (value != "on" && value != "off") {
+            reply("Usage: .bridge on/off");
+            return true;
+        }
+        controller.getOptions().allowBridge = value == "on";
+        reply("Bridge building " + value + ".");
+        return true;
+    }
+
+
     // Only consume direct dot commands that belong to Baritone. This lets
     // server commands such as .warp and .home continue to reach the server.
     static const std::unordered_set<std::string> commands{
         "help", "goto", "goal", "path", "stop", "cancel", "pause",
-        "resume", "status", "water", "fall", "parkour", "y", "xz", "near"
+        "resume", "status", "water", "fall", "parkour", "bridge", "y", "xz", "near", "interact", "twoblocks"
     };
     if (directDotCommand && !commands.contains(command))
         return false;
@@ -83,7 +112,9 @@ bool BaritoneModule::handleChat(const std::string& message) {
     if (command == "help") {
         reply(".goto x y z | .goal x y z | .path | .stop");
         reply(".xz x z | .y level | .near x y z radius");
+        reply(".interact x y z | .twoblocks x y z");
         reply(".pause | .resume | .status | .water on/off | .parkour on/off | .fall 0-20");
+        reply(".bridge on/off (expensive gap fallback)");
         return true;
     }
 
@@ -190,6 +221,26 @@ bool BaritoneModule::handleChat(const std::string& message) {
         return true;
     }
 
+    if ((command == "interact" || command == "twoblocks") && args.size() == 4) {
+        int x{}, y{}, z{};
+        if (!parseInt(args[1], x) || !parseInt(args[2], y) || !parseInt(args[3], z)) {
+            reply("Usage: ." + command + " x y z");
+            return true;
+        }
+        if (!isEnabled())
+            setEnabled(true);
+        std::shared_ptr<baritone::Goal> goal;
+        if (command == "interact")
+            goal = std::make_shared<baritone::GoalGetToBlock>(baritone::BlockPos{x, y, z});
+        else
+            goal = std::make_shared<baritone::GoalTwoBlocks>(baritone::BlockPos{x, y, z});
+        if (!controller.goTo(std::move(goal)))
+            reply("Join a world before starting pathing.");
+        else
+            reply("Calculating path.");
+        return true;
+    }
+
     if ((command == "goto" || command == "goal") && args.size() == 4) {
         int x{}, y{}, z{};
         if (!parseInt(args[1], x) || !parseInt(args[2], y) || !parseInt(args[3], z)) {
@@ -222,5 +273,5 @@ baritone::BaritoneController& BaritoneModule::getController() { return controlle
 
 void BaritoneModule::reply(const std::string& text) const {
     if (const auto gui = MC::getGuiData())
-        gui->displayClientMessage("\xC2\xA7" "6[Baritone]" "\xC2\xA7" "r " + text);
+        gui->displayClientMessage("\xC2\xA7" "6[Limiter]" "\xC2\xA7" "r " + text);
 }

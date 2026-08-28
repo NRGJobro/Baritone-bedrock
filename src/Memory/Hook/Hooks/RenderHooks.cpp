@@ -8,6 +8,7 @@
 #include "../../../SDK/Render/MinecraftUIRenderContext.h"
 #include "../../../SDK/Screen/ScreenView.h"
 #include "../../../Utils/DrawUtils.h"
+#include "../../../Utils/LimiterTess.h"
 #include "../../../Utils/TimeUtils.h"
 #include "../../../Utils/Utils.h"
 #include "../HookManager.h"
@@ -39,7 +40,7 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
 
         const auto module = g_modMgr.getModule<BaritoneModule>();
         if (module != nullptr && module->isEnabled() && !g_Client.clickGuiOpened) {
-            const auto status = "Baritone: " + module->getController().getStatusLine();
+            const auto status = "Limiter: " + module->getController().getStatusLine();
             DrawUtils::drawText(status, {4.f, 4.f}, {0.85f, 0.95f, 1.f, 1.f}, 0.85f);
         }
     } else {
@@ -49,9 +50,13 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
 
 void LevelRenderer_renderLevel(LevelRenderer* renderer, ScreenContext* screenContext, void* frame) {
     static auto original = GET_HOOK(&LevelRenderer_renderLevel);
+    g_modMgr.onBeforeRenderLevel();
     original(renderer, screenContext, frame);
+    g_modMgr.onAfterRenderLevel();
     DrawUtils::update(screenContext);
+    LimiterTess::setTessellator3D(screenContext);
     g_modMgr.onRenderLevel();
+    LimiterTess::setTessellator3D(nullptr);
 }
 
 } // namespace

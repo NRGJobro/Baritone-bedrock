@@ -12,6 +12,12 @@ void Module::onDisable() { }
 
 void Module::onTick() { }
 
+void Module::onPostTick() { }
+
+void Module::onBeforeRenderLevel() { }
+
+void Module::onAfterRenderLevel() { }
+
 void Module::onRenderLevel() { }
 
 const std::string& Module::getDescription() {

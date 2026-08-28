@@ -1,9 +1,13 @@
 #include "Baritone/Core/Goal.h"
+#include "Baritone/Core/Movement.h"
 #include "Baritone/Core/Pathfinder.h"
+#include "Baritone/Bedrock/BedrockPhysics.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <iostream>
+#include <cmath>
 #include <unordered_set>
 
 namespace {
@@ -14,6 +18,7 @@ public:
     int maxLoadedX = 64;
     std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> solid;
     std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> hazard;
+    std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> liquid;
 
     FakeWorld() {
         for (int x = -64; x <= 64; ++x) {
@@ -28,7 +33,7 @@ public:
         return {
             .loaded = true,
             .solid = solid.contains(pos),
-            .liquid = false,
+            .liquid = liquid.contains(pos),
             .hazard = hazard.contains(pos)
         };
     }
@@ -157,6 +162,101 @@ void crossesThreeBlockGapWithSprintParkour() {
     }));
 }
 
+void crossesFourBlockGapWithBridgeFallback() {
+    FakeWorld world;
+    for (int x = 1; x <= 4; ++x)
+        for (int z = -8; z <= 8; ++z)
+            world.solid.erase({x, -1, z});
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowFall = false;
+    options.allowParkour = false;
+    options.allowBridge = true;
+    options.bridgeOnlyAfterFailure = false;
+    options.maxBridgeLength = 8;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{5, 0, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(std::ranges::any_of(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::Bridge;
+    }));
+}
+
+void crossesTenBlockGapAtConfiguredBridgeLimit() {
+    FakeWorld world;
+    for (int x = 1; x <= 10; ++x)
+        for (int z = -12; z <= 12; ++z)
+            world.solid.erase({x, -1, z});
+
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowFall = false;
+    options.allowParkour = false;
+    options.allowBridge = true;
+    options.bridgeOnlyAfterFailure = false;
+    options.maxBridgeLength = 10;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{11, 0, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(std::ranges::any_of(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::Bridge;
+    }));
+}
+
+void discoversEdgeConnectedDiagonalBridge() {
+    FakeWorld world;
+    const std::array<baritone::BlockPos, 5> bridgeCells{{
+        {1, -1, 0}, {1, -1, 1}, {2, -1, 1}, {2, -1, 2}, {3, -1, 2}
+    }};
+    for (const auto& cell : bridgeCells)
+        world.solid.erase(cell);
+
+    baritone::PathOptions options;
+    options.allowDiagonal = true;
+    options.allowBridge = true;
+    options.bridgeOnlyAfterFailure = false;
+    options.maxBridgeLength = 5;
+    const auto movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.type == baritone::MovementType::Bridge &&
+            movement.destination == baritone::BlockPos{3, 0, 3};
+    }));
+}
+
+void alwaysUsesSafeWaterDropRegardlessOfWaterToggle() {
+    FakeWorld world;
+    world.solid.insert({0, 9, 0});
+    world.liquid.insert({1, 0, 0});
+
+    baritone::PathOptions options;
+    options.allowWater = false;
+    options.allowFall = false;
+    options.allowParkour = false;
+    options.allowBridge = false;
+    baritone::Pathfinder finder;
+    finder.begin({0, 10, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{2, 0, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(std::ranges::any_of(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::WaterDrop;
+    }));
+}
+
+void modelsBedrockPlayerPhysics() {
+    using namespace baritone::bedrock_physics;
+    float walkVelocity = 0.f;
+    float sprintVelocity = 0.f;
+    for (int tick = 0; tick < 100; ++tick) {
+        walkVelocity = nextGroundVelocity(walkVelocity, 1.f, false, false);
+        sprintVelocity = nextGroundVelocity(sprintVelocity, 1.f, true, false);
+    }
+    assert(std::abs(walkVelocity - 0.21585f) < 0.001f);
+    assert(std::abs(sprintVelocity - 0.28060f) < 0.001f);
+    assert(std::abs(safeTakeoffEdge - 0.775f) < 0.0001f);
+    assert(projectedAirDisplacement(0.28f, 1.f, true, false, 5) >
+        projectedAirDisplacement(0.28f, 0.f, true, false, 5));
+    assert(ticksUntilLandingPlane(0.f, jumpVelocity, 0.f) > 1);
+}
+
 } // namespace
 
 int main() {
@@ -170,6 +270,11 @@ int main() {
     crossesOneBlockGapWithParkour();
     respectsParkourToggle();
     crossesThreeBlockGapWithSprintParkour();
-    std::cout << "Baritone core tests passed\n";
+    crossesFourBlockGapWithBridgeFallback();
+    crossesTenBlockGapAtConfiguredBridgeLimit();
+    discoversEdgeConnectedDiagonalBridge();
+    alwaysUsesSafeWaterDropRegardlessOfWaterToggle();
+    modelsBedrockPlayerPhysics();
+    std::cout << "Limiter core tests passed\n";
     return 0;
 }

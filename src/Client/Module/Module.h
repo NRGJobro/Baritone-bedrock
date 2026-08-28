@@ -15,6 +15,9 @@ public:
     virtual void onEnable();
     virtual void onDisable();
     virtual void onTick();
+    virtual void onPostTick();
+    virtual void onBeforeRenderLevel();
+    virtual void onAfterRenderLevel();
     virtual void onRenderLevel();
 
     const std::string& getDescription();

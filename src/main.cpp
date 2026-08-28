@@ -17,12 +17,12 @@ DWORD WINAPI start(LPVOID module) {
     sigMgr.scanAll();
     MC::init();
 
-    SetWindowTextA(MC::getWindowHandle(), "Borion Baritone - Minecraft");
+    SetWindowTextA(MC::getWindowHandle(), "Limiter - Minecraft");
 
     g_modMgr.init();
     HookManager::initializeHooks();
     HookManager::setHooksEnabled(true);
-    logF("Borion Baritone initialized");
+    logF("Limiter initialized");
 
     while (g_Client.running)
         Sleep(10);

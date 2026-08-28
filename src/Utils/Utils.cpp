@@ -59,7 +59,7 @@ const std::string& Utils::getLocalAppdataFolder() {
 }
 
 const std::string& Utils::getClientFolder() {
-    static auto path = getLocalAppdataFolder() + "BorionBaritone\\";
+    static auto path = getLocalAppdataFolder() + "Limiter\\";
 
     return path;
 }

@@ -11,7 +11,8 @@ public:
 
 private:
     static inline bool builtMeshes = false;
-    static inline mce::Mesh bgMesh{}, lineMesh{}, modMesh{}, settingsMesh{}, enabledStateMesh{}, circle{};
+    static inline mce::Mesh overlayMesh{}, shadowMesh{}, bgMesh{}, sidebarMesh{}, navMesh{}, lineMesh{};
+    static inline mce::Mesh modMesh{}, modHoverMesh{}, cardAccentMesh{}, settingsMesh{}, enabledStateMesh{}, circle{};
 
     static void buildMeshes();
 };

@@ -95,6 +95,9 @@ void MultiPlayerLevel__subTick(Level* level) {
     // Feed movement into Bedrock before its normal physics and networking run.
     g_modMgr.onTick();
     original(level);
+    // Limiter keeps movement/server yaw separate from displayed yaw. Apply the
+    // eased visual endpoint only after Bedrock has consumed path input.
+    g_modMgr.onPostTick();
 }
 
 } // namespace

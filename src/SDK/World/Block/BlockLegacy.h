@@ -16,6 +16,7 @@ public:
     mce::Color getMapColor(BlockSource* source, glm::ivec3 pos, Block* block);
     Material* getMaterial();
 
+
     const AABB& getVisualShape(Block* block, AABB& buffer);
 
     bool canProvideSupport(Block* block, FacingID facing = FacingID::Up, BlockSupportType supportType = BlockSupportType::Edge);

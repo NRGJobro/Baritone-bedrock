@@ -75,6 +75,7 @@ void SigInit::initRest() {
 
     ADD_SIG("BlockSource::fetchBlocks", "4C 8B DC 53 41 54 41 55 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 84 24 ? ? ? ? 44 8B 0A");
 
+
     ADD_SIG("Actor::getAttachPos", "40 53 48 83 EC 20 0F 57 DB 48 8B DA");
 
     ADD_SIG("ItemStackBase::getColor", "48 89 5C 24 ? 48 89 6C 24 ? 56 57 41 54 41 56 41 57 48 83 EC ? 4C 8B FA 48 8B F1 33 FF");

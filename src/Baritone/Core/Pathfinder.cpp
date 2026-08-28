@@ -22,6 +22,7 @@ void Pathfinder::begin(const BlockPos& startPos, std::shared_ptr<Goal> newGoal, 
     }
 
     bestHeuristic = goal->heuristic(start);
+    bestScore = bestHeuristic;
     auto& startNode = nodes[start];
     startNode.g = 0.0;
     startNode.f = bestHeuristic;
@@ -56,7 +57,13 @@ SearchStatus Pathfinder::step(const IWorld& world, std::size_t budget) {
         ++expanded;
 
         const double h = goal->heuristic(entry.pos);
-        if (h < bestHeuristic) {
+        // Java Baritone keeps several best-so-far candidates with weighted
+        // cost coefficients. This equivalent Bedrock selection balances goal
+        // progress against the actual Bedrock tick cost, preventing a cheap
+        // heuristic-only branch from winning partial-path recovery.
+        const double score = h + current.g / 2.0;
+        if (score < bestScore) {
+            bestScore = score;
             bestHeuristic = h;
             best = entry.pos;
         }

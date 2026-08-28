@@ -1,4 +1,5 @@
 #include "Goal.h"
+#include "ActionCosts.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +16,9 @@ double octile(const BlockPos& from, const BlockPos& to) {
     const auto dy = static_cast<double>(std::abs(from.y - to.y));
     const auto diagonal = std::min(dx, dz);
     const auto straight = std::max(dx, dz) - diagonal;
-    return diagonal * std::numbers::sqrt2 + straight + dy * 1.25;
+    const double horizontal = (diagonal * std::numbers::sqrt2 + straight) * action_costs::sprintOneBlock;
+    const double vertical = dy > 0 ? dy * action_costs::jumpOneBlock() : action_costs::fallTicks(static_cast<int>(-dy)) * 0.5;
+    return horizontal + vertical;
 }
 
 std::string coordinates(const BlockPos& pos) {

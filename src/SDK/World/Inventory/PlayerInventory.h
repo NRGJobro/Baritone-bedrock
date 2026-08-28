@@ -11,5 +11,6 @@ public:
     };
 
     int getSelectedHotbarSlot();
+    void setSelectedHotbarSlot(int slot);
     Inventory* getInventory();
 };

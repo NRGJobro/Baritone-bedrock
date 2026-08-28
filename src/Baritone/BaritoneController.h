@@ -18,9 +18,8 @@ struct RenderOptions {
     bool renderPath = true;
     bool renderGoal = true;
     bool animatedGoal = true;
-    bool fadePath = false;
-    bool pathAsLine = false;
     bool renderCalculations = true;
+    bool renderThroughWalls = true;
 };
 
 class BaritoneController {
@@ -48,6 +47,9 @@ public:
     void pause();
     void resume();
     void tick();
+    void postTick();
+    void beginVisualRotationRender();
+    void endVisualRotationRender();
     void render() const;
 
     [[nodiscard]] ControllerState getState() const;

@@ -23,6 +23,9 @@ public:
     void init();
     void shutdown();
     void onTick();
+    void onPostTick();
+    void onBeforeRenderLevel();
+    void onAfterRenderLevel();
     void onRenderLevel();
     bool handleChat(const std::string& message);
 

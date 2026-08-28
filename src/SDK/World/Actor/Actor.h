@@ -5,6 +5,8 @@
 #include "ActorLocation.h"
 #include "Components/StateVectorComponent.h"
 #include "Components/ActorRotationComponent.h"
+#include "Components/ActorHeadRotationComponent.h"
+#include "Components/MobBodyRotationComponent.h"
 #include "Components/MovementFlags.h"
 #include "EntityContext/EntityContext.h"
 

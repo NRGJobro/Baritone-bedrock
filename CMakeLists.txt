@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.0)
 
-project(BorionBaritone LANGUAGES CXX)
+project(Limiter LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,17 +22,17 @@ set_property(
     $<$<CONFIG:Debug>:MultiThreadedDLL>$<$<CONFIG:Release>:MultiThreaded>
 )
 
-option(BORION_BUILD_TESTS "Build platform-independent Baritone core tests" ON)
+option(BORION_BUILD_TESTS "Build platform-independent Limiter core tests" ON)
 
 if(BORION_BUILD_TESTS)
     enable_testing()
-    add_executable(BaritoneCoreTests
+    add_executable(LimiterCoreTests
         tests/PathfinderTests.cpp
         src/Baritone/Core/Goal.cpp
         src/Baritone/Core/Movement.cpp
         src/Baritone/Core/Pathfinder.cpp
     )
-    target_include_directories(BaritoneCoreTests PRIVATE src)
-    target_link_libraries(BaritoneCoreTests PRIVATE glm)
-    add_test(NAME BaritoneCoreTests COMMAND BaritoneCoreTests)
+    target_include_directories(LimiterCoreTests PRIVATE src)
+    target_link_libraries(LimiterCoreTests PRIVATE glm)
+    add_test(NAME LimiterCoreTests COMMAND LimiterCoreTests)
 endif()

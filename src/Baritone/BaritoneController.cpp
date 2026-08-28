@@ -32,6 +32,9 @@ bool BaritoneController::path() {
         return false;
 
     stuckReplans = 0;
+    // Keep planning and execution on the same movement capability profile.
+    options.preferSprint = executionOptions.sprint;
+    options.bridgeOnlyAfterFailure = options.allowBridge;
     beginCalculation(getPlayerBlock());
     return true;
 }
@@ -81,6 +84,16 @@ void BaritoneController::tick() {
         if (search == SearchStatus::Searching)
             return;
 
+        if (search == SearchStatus::Partial && options.allowBridge && options.bridgeOnlyAfterFailure) {
+            options.bridgeOnlyAfterFailure = false;
+            // Construction expands the frontier substantially; give the
+            // fallback search enough budget to reach the far platform instead
+            // of stopping at the same loaded-world partial edge.
+            options.maxExpandedNodes = std::max<std::size_t>(options.maxExpandedNodes, 200000);
+            message("Ordinary search reached a dead end; evaluating bridge routes.");
+            beginCalculation(getPlayerBlock());
+            return;
+        }
         if ((search == SearchStatus::Found || search == SearchStatus::Partial) && pathfinder.getPath().size() > 1) {
             executingPartialPath = search == SearchStatus::Partial;
             executor.begin(pathfinder.getPath());
@@ -90,6 +103,13 @@ void BaritoneController::tick() {
             state = ControllerState::Arrived;
             message("Already at the goal.");
         } else {
+            if (options.allowBridge && options.bridgeOnlyAfterFailure) {
+                options.bridgeOnlyAfterFailure = false;
+                options.maxExpandedNodes = std::max<std::size_t>(options.maxExpandedNodes, 200000);
+                message("No ordinary route; evaluating bridge routes.");
+                beginCalculation(getPlayerBlock());
+                return;
+            }
             state = ControllerState::Failed;
             message("No walkable path was found from the current position.");
         }
@@ -121,6 +141,12 @@ void BaritoneController::tick() {
             message("Stopped after three failed recovery attempts.");
         }
         break;
+    case ExecutionStatus::OffPath:
+        // Route invalidation is not a stall and should not consume one of the
+        // limited stall-recovery attempts. Rebuild from the physical position.
+        message("Left the path; finding a new route.");
+        beginCalculation(getPlayerBlock());
+        break;
     case ExecutionStatus::NoPlayer:
         executor.stop(player);
         state = ControllerState::Failed;
@@ -128,6 +154,18 @@ void BaritoneController::tick() {
     case ExecutionStatus::Idle:
         break;
     }
+}
+
+void BaritoneController::postTick() {
+    executor.applyVisualRotation(MC::getLocalPlayer());
+}
+
+void BaritoneController::beginVisualRotationRender() {
+    executor.beginVisualRotationRender(MC::getLocalPlayer());
+}
+
+void BaritoneController::endVisualRotationRender() {
+    executor.endVisualRotationRender(MC::getLocalPlayer());
 }
 
 void BaritoneController::render() const {
@@ -180,7 +218,7 @@ void BaritoneController::beginCalculation(const BlockPos& start) {
 
 void BaritoneController::message(const std::string& text) const {
     if (const auto gui = MC::getGuiData())
-        gui->displayClientMessage("\xC2\xA7" "6[Baritone]" "\xC2\xA7" "r " + text);
+        gui->displayClientMessage("\xC2\xA7" "6[Limiter]" "\xC2\xA7" "r " + text);
 }
 
 } // namespace baritone

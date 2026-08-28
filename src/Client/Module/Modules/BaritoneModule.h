@@ -15,6 +15,9 @@ public:
     void onEnable() override;
     void onDisable() override;
     void onTick() override;
+    void onPostTick() override;
+    void onBeforeRenderLevel() override;
+    void onAfterRenderLevel() override;
     void onRenderLevel() override;
 
     bool handleChat(const std::string& message);

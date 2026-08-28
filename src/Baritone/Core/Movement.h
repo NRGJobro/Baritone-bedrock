@@ -13,8 +13,10 @@ enum class MovementType {
     Ascend,
     Descend,
     Fall,
+    WaterDrop,
     Swim,
-    Parkour
+    Parkour,
+    Bridge
 };
 
 struct Movement {

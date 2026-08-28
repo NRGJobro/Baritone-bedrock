@@ -26,8 +26,14 @@ struct PathOptions {
     bool allowFall = true;
     bool allowParkour = true;
     bool allowParkourAscend = true;
+    bool allowBridge = false;
+    // First search without construction; if that search exhausts, the
+    // controller retries with bridge transitions enabled.
+    bool bridgeOnlyAfterFailure = true;
+    bool preferSprint = true;
     int maxParkourDistance = 4;
     int maxFallHeight = 3;
+    int maxBridgeLength = 8;
     std::size_t maxExpandedNodes = 60000;
     std::size_t nodesPerTick = 350;
 };

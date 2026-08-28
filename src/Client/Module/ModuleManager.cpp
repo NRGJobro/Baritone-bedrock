@@ -23,6 +23,27 @@ void ModuleManager::onTick() {
     }
 }
 
+void ModuleManager::onPostTick() {
+    for (const auto& module : std::views::values(this->modules)) {
+        if (module->isEnabled())
+            module->onPostTick();
+    }
+}
+
+void ModuleManager::onBeforeRenderLevel() {
+    for (const auto& module : std::views::values(this->modules)) {
+        if (module->isEnabled())
+            module->onBeforeRenderLevel();
+    }
+}
+
+void ModuleManager::onAfterRenderLevel() {
+    for (const auto& module : std::views::values(this->modules)) {
+        if (module->isEnabled())
+            module->onAfterRenderLevel();
+    }
+}
+
 void ModuleManager::onRenderLevel() {
     for (const auto& module : std::views::values(this->modules)) {
         if (module->isEnabled())

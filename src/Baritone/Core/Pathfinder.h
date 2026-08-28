@@ -55,6 +55,7 @@ class Pathfinder {
     BlockPos best{};
     BlockPos mostRecent{};
     double bestHeuristic = std::numeric_limits<double>::infinity();
+    double bestScore = std::numeric_limits<double>::infinity();
     bool hasMostRecent = false;
     std::size_t expanded = 0;
     SearchStatus status = SearchStatus::Idle;

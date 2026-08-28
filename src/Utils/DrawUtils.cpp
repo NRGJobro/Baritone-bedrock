@@ -13,6 +13,7 @@ static mce::MaterialPtr* nameTagDepthTested;
 static mce::MaterialPtr* signText;
 static mce::MaterialPtr* uiTextureAndColor;
 static mce::MaterialPtr* fullscreenCubeOverlayBlend;
+static mce::MaterialPtr* selectionOverlay;
 
 static MinecraftUIRenderContext* renderCtx;
 static ScreenContext* screenContext;
@@ -45,6 +46,9 @@ void DrawUtils::update(ScreenContext* ctx) {
 
     if (fullscreenCubeOverlayBlend == nullptr)
         fullscreenCubeOverlayBlend = mce::MaterialPtr::createMaterial("fullscreen_cube_overlay_blend");
+
+    if (selectionOverlay == nullptr)
+        selectionOverlay = mce::MaterialPtr::createMaterial("selection_overlay");
 }
 
 mce::MaterialPtr* DrawUtils::getUIFillColor() {
@@ -73,6 +77,10 @@ mce::MaterialPtr* DrawUtils::getUITextureAndColor() {
 
 mce::MaterialPtr* DrawUtils::getFullscreenCubeOverlayBlend() {
     return fullscreenCubeOverlayBlend;
+}
+
+mce::MaterialPtr* DrawUtils::getSelectionOverlay() {
+    return selectionOverlay;
 }
 
 Tessellator* DrawUtils::getTessellator() {
