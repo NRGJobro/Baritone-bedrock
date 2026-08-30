@@ -3,6 +3,8 @@
 #include "Bedrock/PathExecutor.h"
 #include "Core/Goal.h"
 
+#include <unordered_set>
+
 namespace baritone {
 
 enum class ControllerState {
@@ -32,8 +34,16 @@ class BaritoneController {
     Pathfinder pathfinder{};
     PathExecutor executor{};
     bool executingPartialPath = false;
+    // The executor may walk a best-so-far path while the same A* search keeps
+    // expanding in the background.
+    bool executingPreviewPath = false;
     bool replanWhenStuck = true;
     int stuckReplans = 0;
+    int supportConflictReplans = 0;
+    // If a candidate mining route schedules a block for removal and later
+    // needs that same block as footing, recalculate with that support treated
+    // as non-breakable for the lifetime of this goal.
+    std::unordered_set<BlockPos, BlockPosHash> protectedMiningSupports;
 
     [[nodiscard]] BlockPos getPlayerBlock() const;
     void beginCalculation(const BlockPos& start);
@@ -50,10 +60,12 @@ public:
     void postTick();
     void beginVisualRotationRender();
     void endVisualRotationRender();
-    void render() const;
+    void render(const std::vector<BlockPos>& miningTargets = {},
+        bool miningActive = false) const;
 
     [[nodiscard]] ControllerState getState() const;
     [[nodiscard]] std::string getStatusLine() const;
+    [[nodiscard]] double getEstimatedTicksToGoal() const;
     [[nodiscard]] const std::shared_ptr<Goal>& getGoal() const;
     [[nodiscard]] PathOptions& getOptions();
     [[nodiscard]] ExecutionOptions& getExecutionOptions();

@@ -1,11 +1,13 @@
 #include "ModuleManager.h"
 
 #include "Modules/BaritoneModule.h"
+#include "Modules/FullBrightModule.h"
 
 ModuleManager g_modMgr;
 
 void ModuleManager::init() {
     this->addModule<BaritoneModule>();
+    this->addModule<FullBrightModule>();
 }
 
 void ModuleManager::shutdown() {

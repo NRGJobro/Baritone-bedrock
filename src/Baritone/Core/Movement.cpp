@@ -28,7 +28,56 @@ bool safeWaterLanding(const IWorld& world, const BlockPos& pos) {
         !head.solid && !head.hazard;
 }
 
+double breakCostForBlock(const IWorld& world, const BlockPos& pos, const PathOptions& options) {
+    const auto block = world.getBlock(pos);
+    if (!block.loaded || block.hazard || (block.liquid && !options.allowWater))
+        return action_costs::costInf;
+    if (!block.solid)
+        return 0.0;
+    if (!options.allowBreak || !block.breakable)
+        return action_costs::costInf;
+    if (options.miningMode && MovementGenerator::wouldExposeLiquid(world, pos))
+        return action_costs::costInf;
+    // Mining is deliberately preferred for short underground corridors. The
+    // executor still waits for Bedrock's real destroy progress; this planning
+    // cost only prevents A* from choosing a huge detour around a wall when a
+    // nearby break-and-walk route is available.
+    return 1.0;
+}
+
+double breakCostToOccupy(const IWorld& world, const BlockPos& pos, const PathOptions& options) {
+    const double feet = breakCostForBlock(world, pos, options);
+    const double head = breakCostForBlock(world, pos.offset(0, 1, 0), options);
+    if (feet >= action_costs::costInf || head >= action_costs::costInf)
+        return action_costs::costInf;
+    return feet + head;
+}
+
+bool hasSafeSupport(const IWorld& world, const BlockPos& pos) {
+    const auto support = world.getBlock(pos.offset(0, -1, 0));
+    return support.loaded && support.solid && !support.hazard;
+}
+
+bool safeBridgeWater(const IWorld& world, const BlockPos& supportPos) {
+    const auto support = world.getBlock(supportPos);
+    return support.loaded && support.liquid && !support.solid && !support.hazard;
+}
+
 } // namespace
+
+bool MovementGenerator::wouldExposeLiquid(const IWorld& world, const BlockPos& pos) {
+    // Fluids flow down and sideways, never upward. Checking the block above
+    // plus four horizontal neighbors models every immediate opening caused by
+    // removing this cell without rejecting a safe block merely because water
+    // is underneath it.
+    static constexpr std::array<BlockPos, 5> flowSources{{
+        {0, 1, 0}, {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}
+    }};
+    return std::ranges::any_of(flowSources, [&](const BlockPos& offset) {
+        const auto neighbor = world.getBlock(pos.offset(offset.x, offset.y, offset.z));
+        return neighbor.loaded && neighbor.liquid;
+    });
+}
 
 bool MovementGenerator::canOccupy(const IWorld& world, const BlockPos& pos, const PathOptions& options) {
     return passable(world.getBlock(pos), options) && passable(world.getBlock(pos.offset(0, 1, 0)), options);
@@ -43,13 +92,21 @@ bool MovementGenerator::canStandAt(const IWorld& world, const BlockPos& pos, con
 }
 
 std::vector<Movement> MovementGenerator::getMovements(const IWorld& world, const BlockPos& from, const PathOptions& options) {
+    std::vector<Movement> result;
+    getMovements(world, from, options, result);
+    return result;
+}
+
+void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
+    const PathOptions& options, std::vector<Movement>& result) {
     static constexpr std::array<std::pair<int, int>, 8> directions{{
         {1, 0}, {-1, 0}, {0, 1}, {0, -1},
         {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
     }};
 
-    std::vector<Movement> result;
-    result.reserve(16);
+    result.clear();
+    if (result.capacity() < 24)
+        result.reserve(24);
 
     const bool fromWater = swimmable(world, from, options);
     const bool descendingWaterColumn = fromWater && swimmable(world, from.offset(0, -1, 0), options);
@@ -80,19 +137,84 @@ std::vector<Movement> MovementGenerator::getMovements(const IWorld& world, const
             continue;
         }
 
+        if (!diagonal && hasSafeSupport(world, adjacent)) {
+            const double breakCost = breakCostToOccupy(world, adjacent, options);
+            if (breakCost > 0.0 && breakCost < action_costs::costInf)
+                result.push_back({adjacent, MovementType::BreakTraverse,
+                    action_costs::walkOneBlock + breakCost});
+        }
+
         if (!diagonal && options.allowAscend) {
             const auto up = adjacent.offset(0, 1, 0);
             if (canStandAt(world, up, options) && canOccupy(world, from.offset(0, 1, 0), options)) {
                 result.push_back({up, MovementType::Ascend, action_costs::jumpOneBlock()});
                 continue;
             }
+            // A mined ascent sweeps three breakable cells: the space above the
+            // source player's head, then the raised destination's feet/head
+            // column. Requiring the source ceiling to already be air removed
+            // this transition inside solid deepslate and forced huge detours
+            // through previously opened caves instead of a compact staircase.
+            const double sourceCeilingCost = breakCostForBlock(
+                world, from.offset(0, 2, 0), options);
+            const double destinationCost = breakCostToOccupy(world, up, options);
+            const double breakCost = sourceCeilingCost >= action_costs::costInf ||
+                destinationCost >= action_costs::costInf
+                ? action_costs::costInf
+                : sourceCeilingCost + destinationCost;
+            const auto step = world.getBlock(adjacent);
+            if (step.loaded && step.solid && !step.hazard &&
+                breakCost > 0.0 && breakCost < action_costs::costInf)
+                result.push_back({up, MovementType::BreakAscend,
+                    action_costs::jumpOneBlock() + breakCost});
+
         }
 
-        // Water cancels fall damage, so a clear loaded column ending in water
-        // is always a valid fast descent. This deliberately ignores both the
-        // ordinary Water toggle and maxFallHeight; the toggle controls route
-        // swimming, not safe water landings.
-        if (!diagonal) {
+        // Build a short supported step over a gap, then jump onto the placed
+        // block. This gives mining a believable way up when normal one-block
+        // stairs are unavailable without enabling long parkour jumps.
+        if (!diagonal && options.allowBridge && !options.bridgeOverWaterOnly &&
+            canStandAt(world, from, options) &&
+            passable(world.getBlock(adjacent), options) &&
+            !canStandAt(world, adjacent, options)) {
+            const auto raised = adjacent.offset(0, 1, 0);
+            if (canOccupy(world, raised, options))
+                result.push_back({raised, MovementType::BuildAscend,
+                    action_costs::jumpOneBlock() + 12.0});
+        }
+
+
+        if (!diagonal && options.allowFall) {
+            const auto down = adjacent.offset(0, -1, 0);
+            const double destinationCost = breakCostToOccupy(world, down, options);
+            // Before gravity lowers the feet, a descending player first sweeps
+            // horizontally into the block at current head height. The lower
+            // destination column alone misses this clearly visible obstruction.
+            // A descending player first crosses the adjacent block at the
+            // current feet height, then its head-height sweep, and only then
+            // reaches the lower landing column. Include all three blocks in
+            // the cost so route selection and execution agree on the visible
+            // front-to-back mining order.
+            const double feetSweepCost = breakCostForBlock(world, adjacent, options);
+            const double upperSweepCost = breakCostForBlock(
+                world, adjacent.offset(0, 1, 0), options);
+            const double breakCost = destinationCost >= action_costs::costInf ||
+                feetSweepCost >= action_costs::costInf ||
+                upperSweepCost >= action_costs::costInf
+                ? action_costs::costInf
+                : destinationCost + feetSweepCost + upperSweepCost;
+            if (hasSafeSupport(world, down) && breakCost > 0.0 && breakCost < action_costs::costInf)
+                result.push_back({down, MovementType::BreakDescend,
+                    action_costs::walkOffBlock + action_costs::fallTicks(1) + breakCost});
+        }
+
+        // For ordinary navigation, water cancels fall damage, so a clear
+        // loaded column ending in water is a valid fast descent. Mining mode
+        // deliberately excludes this shortcut because entering water can
+        // derail the active mining route.
+        const auto descentEntryHead = world.getBlock(adjacent.offset(0, 1, 0));
+        if (!options.miningMode && !diagonal && descentEntryHead.loaded && !descentEntryHead.solid &&
+            !descentEntryHead.hazard) {
             constexpr int maximumLoadedDrop = 384;
             for (int drop = 1; drop <= maximumLoadedDrop; ++drop) {
                 const auto cell = adjacent.offset(0, -drop, 0);
@@ -112,7 +234,7 @@ std::vector<Movement> MovementGenerator::getMovements(const IWorld& world, const
 
         if (options.allowFall) {
             const auto down = adjacent.offset(0, -1, 0);
-            if (canStandAt(world, down, options)) {
+            if (canStandAt(world, down, options) && canOccupy(world, adjacent, options)) {
                 result.push_back({down, MovementType::Descend,
                     horizontalCost * action_costs::walkOffBlock + action_costs::fallTicks(1) + action_costs::centerAfterFall});
                 continue;
@@ -172,7 +294,53 @@ std::vector<Movement> MovementGenerator::getMovements(const IWorld& world, const
         }
     }
 
-    if (options.allowBridge && (!options.bridgeOnlyAfterFailure) && !fromWater && canStandAt(world, from, options)) {
+    // A mining descent does not need a two-column staircase. Remove the
+    // single floor block directly under the player and fall one block in the
+    // same X/Z column, provided the next floor is loaded, solid, and safe.
+    // Fluid exposure, hazards, and unbreakable blocks are rejected by the
+    // same break/support checks used by every other mining transition.
+    if (options.miningMode && options.allowFall && options.allowBreak && !fromWater) {
+        const auto down = from.offset(0, -1, 0);
+        const double breakCost = breakCostToOccupy(world, down, options);
+        if (hasSafeSupport(world, down) && breakCost > 0.0 &&
+            breakCost < action_costs::costInf) {
+            result.push_back({down, MovementType::BreakDown,
+                action_costs::fallTicks(1) + action_costs::centerAfterFall + breakCost});
+        }
+    }
+
+    // Mining's construction policy is intentionally narrow and cheap to
+    // search: from a shoreline, scan each cardinal direction until the first
+    // solid landing and require every missing support cell to be safe water.
+    if (options.allowBridge && !options.bridgeOnlyAfterFailure && options.bridgeOverWaterOnly &&
+        !fromWater && canStandAt(world, from, options)) {
+        static constexpr std::array<std::pair<int, int>, 4> cardinal{{
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1}
+        }};
+        const int maxGapLength = std::clamp(options.maxBridgeLength, 1, 16);
+        for (const auto [dx, dz] : cardinal) {
+            for (int distance = 2; distance <= maxGapLength + 1; ++distance) {
+                const int gapStep = distance - 1;
+                const auto support = from.offset(dx * gapStep, -1, dz * gapStep);
+                const auto gapCell = from.offset(dx * gapStep, 0, dz * gapStep);
+                if (!safeBridgeWater(world, support) ||
+                    !canOccupy(world, gapCell, options) ||
+                    !passable(world.getBlock(gapCell.offset(0, 2, 0)), options))
+                    break;
+
+                const auto landing = from.offset(dx * distance, 0, dz * distance);
+                if (!canStandAt(world, landing, options))
+                    continue;
+                result.push_back({landing, MovementType::Bridge,
+                    action_costs::walkOneBlock * distance +
+                        static_cast<double>(gapStep) * 9.0});
+                break;
+            }
+        }
+    }
+
+    if (options.allowBridge && (!options.bridgeOnlyAfterFailure) &&
+        !options.bridgeOverWaterOnly && !fromWater && canStandAt(world, from, options)) {
         static constexpr std::array<std::pair<int, int>, 8> bridgeDirections{{
             {1, 0}, {-1, 0}, {0, 1}, {0, -1},
             {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
@@ -286,7 +454,6 @@ std::vector<Movement> MovementGenerator::getMovements(const IWorld& world, const
         }
     }
 
-    return result;
 }
 
 } // namespace baritone

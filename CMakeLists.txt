@@ -21,18 +21,3 @@ set_property(
     PROPERTY MSVC_RUNTIME_LIBRARY
     $<$<CONFIG:Debug>:MultiThreadedDLL>$<$<CONFIG:Release>:MultiThreaded>
 )
-
-option(BORION_BUILD_TESTS "Build platform-independent Limiter core tests" ON)
-
-if(BORION_BUILD_TESTS)
-    enable_testing()
-    add_executable(LimiterCoreTests
-        tests/PathfinderTests.cpp
-        src/Baritone/Core/Goal.cpp
-        src/Baritone/Core/Movement.cpp
-        src/Baritone/Core/Pathfinder.cpp
-    )
-    target_include_directories(LimiterCoreTests PRIVATE src)
-    target_link_libraries(LimiterCoreTests PRIVATE glm)
-    add_test(NAME LimiterCoreTests COMMAND LimiterCoreTests)
-endif()

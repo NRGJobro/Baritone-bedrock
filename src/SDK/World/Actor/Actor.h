@@ -10,6 +10,22 @@
 #include "Components/MovementFlags.h"
 #include "EntityContext/EntityContext.h"
 
+#include <cstdint>
+
+// Source used by Bedrock's native arm-swing animation. Mine is the same
+// first-person animation triggered by a normal pickaxe/block break.
+enum class ActorSwingSource : std::uint8_t {
+    None,
+    Build,
+    Mine,
+    Interact,
+    Attack,
+    UseItem,
+    ThrowItem,
+    DropItem,
+    Event
+};
+
 class Actor {
 public:
     EntityContext& getEntityContext() const;
@@ -25,6 +41,7 @@ public:
     [[nodiscard]] bool isOnGround() const;
     [[nodiscard]] bool isInWater() const;
     void jumpFromGround() const;
+    void swing();
 
     template <typename T>
     auto view() const {

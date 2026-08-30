@@ -97,4 +97,6 @@ double GoalComposite::heuristic(const BlockPos& pos) const {
 
 std::string GoalComposite::describe() const { return "one of " + std::to_string(goals.size()) + " goals"; }
 
+const std::vector<std::shared_ptr<Goal>>& GoalComposite::getGoals() const { return goals; }
+
 } // namespace baritone

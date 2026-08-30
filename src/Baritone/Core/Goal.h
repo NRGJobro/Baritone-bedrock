@@ -72,6 +72,7 @@ public:
     [[nodiscard]] bool isInGoal(const BlockPos& pos) const override;
     [[nodiscard]] double heuristic(const BlockPos& pos) const override;
     [[nodiscard]] std::string describe() const override;
+    [[nodiscard]] const std::vector<std::shared_ptr<Goal>>& getGoals() const;
 };
 
 } // namespace baritone

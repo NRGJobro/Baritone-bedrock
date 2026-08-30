@@ -4,6 +4,9 @@
 #include "../SDK/MC.h"
 #include "../SDK/Render/MeshHelpers.h"
 
+#include <algorithm>
+#include <climits>
+
 namespace {
 ScreenContext* screenContext3D = nullptr;
 glm::vec3 origin{};
@@ -36,6 +39,61 @@ void LimiterTess::drawLine3D(const glm::vec3& start, const glm::vec3& end, const
     tessellator->vertex(endRelative.x, endRelative.y, endRelative.z);
 
     MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+}
+
+void LimiterTess::drawLineList3D(
+    const std::vector<std::pair<glm::vec3, glm::vec3>>& lines, const bool onUi) {
+    if (screenContext3D == nullptr || lines.empty())
+        return;
+
+    auto* tessellator = screenContext3D->tessellator;
+    tessellator->begin(mce::PrimitiveMode::LineList,
+        static_cast<int>(std::min<size_t>(lines.size() * 2, static_cast<size_t>(INT_MAX))));
+    for (const auto& [start, end] : lines) {
+        const glm::vec3 startRelative = start - origin;
+        const glm::vec3 endRelative = end - origin;
+        tessellator->vertex(startRelative.x, startRelative.y, startRelative.z);
+        tessellator->vertex(endRelative.x, endRelative.y, endRelative.z);
+    }
+
+    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+}
+
+void LimiterTess::drawFilledQuad3D(const std::array<glm::vec3, 4>& corners,
+    const bool onUi) {
+    drawFilledQuads3D({corners}, onUi);
+}
+
+void LimiterTess::drawFilledQuads3D(
+    const std::vector<std::array<glm::vec3, 4>>& quads, const bool onUi) {
+    if (screenContext3D == nullptr || quads.empty())
+        return;
+
+    auto* tessellator = screenContext3D->tessellator;
+    tessellator->begin(mce::PrimitiveMode::QuadList,
+        static_cast<int>(std::min<size_t>(quads.size() * 4, static_cast<size_t>(INT_MAX))));
+    for (const auto& corners : quads) {
+        for (const auto& corner : corners) {
+            const glm::vec3 relative = corner - origin;
+            tessellator->vertex(relative.x, relative.y, relative.z);
+        }
+    }
+
+    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+}
+
+void LimiterTess::drawFilledBox3D(const glm::vec3& lower, const glm::vec3& upper,
+    const bool onUi) {
+    const glm::vec3& l = lower;
+    const glm::vec3& u = upper;
+    drawFilledQuads3D({
+        {{{l.x, l.y, l.z}, {l.x, u.y, l.z}, {l.x, u.y, u.z}, {l.x, l.y, u.z}}},
+        {{{u.x, l.y, l.z}, {u.x, l.y, u.z}, {u.x, u.y, u.z}, {u.x, u.y, l.z}}},
+        {{{l.x, l.y, l.z}, {l.x, l.y, u.z}, {u.x, l.y, u.z}, {u.x, l.y, l.z}}},
+        {{{l.x, u.y, l.z}, {u.x, u.y, l.z}, {u.x, u.y, u.z}, {l.x, u.y, u.z}}},
+        {{{l.x, l.y, l.z}, {u.x, l.y, l.z}, {u.x, u.y, l.z}, {l.x, u.y, l.z}}},
+        {{{l.x, l.y, u.z}, {l.x, u.y, u.z}, {u.x, u.y, u.z}, {u.x, l.y, u.z}}}
+    }, onUi);
 }
 
 void LimiterTess::drawBox3D(const glm::vec3& lower, const glm::vec3& upper, const bool onUi) {

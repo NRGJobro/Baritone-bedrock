@@ -5,6 +5,7 @@
 #include "../Level/HitResult/FacingID.h"
 #include "BlockSupportType.h"
 #include "Material/Material.h"
+#include "../../Util/HashedString.h"
 
 class BlockSource;
 class Block;
@@ -12,6 +13,7 @@ class Block;
 class BlockLegacy {
 public:
     int16_t getBlockId();
+    [[nodiscard]] const std::string& getName() const;
     bool isSolid();
     mce::Color getMapColor(BlockSource* source, glm::ivec3 pos, Block* block);
     Material* getMaterial();

@@ -1,4 +1,5 @@
 #include "Baritone/Core/Goal.h"
+#include "Baritone/Core/AdvancedGoals.h"
 #include "Baritone/Core/Movement.h"
 #include "Baritone/Core/Pathfinder.h"
 #include "Baritone/Bedrock/BedrockPhysics.h"
@@ -19,6 +20,7 @@ public:
     std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> solid;
     std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> hazard;
     std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> liquid;
+    std::unordered_set<baritone::BlockPos, baritone::BlockPosHash> unbreakable;
 
     FakeWorld() {
         for (int x = -64; x <= 64; ++x) {
@@ -34,7 +36,8 @@ public:
             .loaded = true,
             .solid = solid.contains(pos),
             .liquid = liquid.contains(pos),
-            .hazard = hazard.contains(pos)
+            .hazard = hazard.contains(pos),
+            .breakable = solid.contains(pos) && !unbreakable.contains(pos)
         };
     }
 };
@@ -110,6 +113,198 @@ void exposesCalculationPaths() {
     assert(finder.step(world, 2) == baritone::SearchStatus::Searching);
     assert(finder.getBestPathSoFar().size() >= 2);
     assert(!finder.getMostRecentPath().empty());
+}
+
+void buildsAndClimbsOverGap() {
+    FakeWorld world;
+    world.solid.erase({1, -1, 0});
+    baritone::PathOptions options;
+    options.allowBridge = true;
+    options.allowParkour = false;
+    const auto movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 1, 0} &&
+            movement.type == baritone::MovementType::BuildAscend;
+    }));
+}
+
+void clearsUpperHeadCellBeforeDescending() {
+    FakeWorld world;
+    world.solid.insert({0, 0, 0});
+    world.solid.insert({1, 2, 0});
+
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowParkour = false;
+    options.allowBridge = false;
+    auto movements = baritone::MovementGenerator::getMovements(world, {0, 1, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 0, 0};
+    }));
+
+    options.allowBreak = true;
+    movements = baritone::MovementGenerator::getMovements(world, {0, 1, 0}, options);
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 0, 0} &&
+            movement.type == baritone::MovementType::BreakDescend;
+    }));
+}
+
+void minesThroughWallWhenAllowed() {
+    FakeWorld world;
+    for (int y = 0; y <= 3; ++y) {
+        for (int z = -8; z <= 8; ++z)
+            world.solid.insert({2, y, z});
+    }
+
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowBridge = false;
+    options.allowParkour = false;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{4, 0, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(std::ranges::any_of(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::BreakTraverse ||
+            node.movement == baritone::MovementType::BreakAscend ||
+            node.movement == baritone::MovementType::BreakDescend;
+    }));
+}
+
+void minesAnEnclosedStairStepUp() {
+    FakeWorld world;
+    // The adjacent lower block remains as the stair tread. The source sweep
+    // and raised destination column are all solid and must be mined.
+    world.solid.insert({1, 0, 0});
+    world.solid.insert({0, 2, 0});
+    world.solid.insert({1, 1, 0});
+    world.solid.insert({1, 2, 0});
+
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowAscend = true;
+    options.allowWater = false;
+    options.allowParkour = false;
+    options.allowBridge = false;
+    options.miningMode = true;
+    auto movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 1, 0} &&
+            movement.type == baritone::MovementType::BreakAscend;
+    }));
+
+    // The same shortcut must disappear if its overhead sweep is bedrock or
+    // another unbreakable block.
+    world.unbreakable.insert({0, 2, 0});
+    movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 1, 0} &&
+            movement.type == baritone::MovementType::BreakAscend;
+    }));
+}
+
+void findsACompactStaircaseThroughSolidRock() {
+    FakeWorld world;
+    for (int x = -2; x <= 2; ++x) {
+        for (int z = -2; z <= 2; ++z) {
+            for (int y = 0; y <= 6; ++y)
+                world.solid.insert({x, y, z});
+        }
+    }
+    world.solid.erase({0, 0, 0});
+    world.solid.erase({0, 1, 0});
+
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowAscend = true;
+    options.allowWater = false;
+    options.allowDiagonal = false;
+    options.allowParkour = false;
+    options.allowBridge = false;
+    options.miningMode = true;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(
+        baritone::BlockPos{0, 4, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(finder.getPath().size() <= 8);
+    assert(std::ranges::count_if(finder.getPath(), [](const auto& node) {
+        return node.movement == baritone::MovementType::BreakAscend;
+    }) >= 4);
+}
+
+void respectsBreakToggleAndUnbreakableBlocks() {
+    FakeWorld world;
+    for (int y = 0; y <= 3; ++y) {
+        for (int z = -8; z <= 8; ++z)
+            world.solid.insert({2, y, z});
+    }
+
+    baritone::PathOptions options;
+    options.allowBreak = false;
+    options.allowBridge = false;
+    options.allowParkour = false;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{4, 0, 0}), options);
+    assert(run(finder, world) != baritone::SearchStatus::Found);
+
+    world.unbreakable = world.solid;
+    options.allowBreak = true;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{4, 0, 0}), options);
+    assert(run(finder, world) != baritone::SearchStatus::Found);
+}
+
+void requiresFullPlayerHeightEverywhere() {
+    FakeWorld world;
+    baritone::PathOptions options;
+
+    // A solid destination head cell makes a one-block-high opening invalid
+    // even though its feet cell is empty.
+    world.solid.insert({1, 1, 0});
+    auto movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 0, 0};
+    }));
+
+    // A one-block ascent needs the extra cell swept by the player's head over
+    // the source column during the jump arc.
+    world.solid.erase({1, 1, 0});
+    world.solid.insert({1, 0, 0});
+    world.solid.insert({0, 2, 0});
+    movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 1, 0};
+    }));
+}
+
+void exposesMovementCostsForEta() {
+    FakeWorld world;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0}, std::make_shared<baritone::GoalBlock>(baritone::BlockPos{8, 0, 0}));
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    assert(finder.getPathCost() > 0.0);
+    assert(finder.getPath().front().costFromPrevious == 0.0);
+    double reconstructedCost = 0.0;
+    for (const auto& node : finder.getPath())
+        reconstructedCost += node.costFromPrevious;
+    assert(std::abs(reconstructedCost - finder.getPathCost()) < 0.0001);
+}
+
+void supportsAdvancedBaritoneGoals() {
+    const baritone::GoalAxis axis;
+    assert(axis.isInGoal({0, 20, 400}));
+    assert(axis.isInGoal({-300, 5, 0}));
+    assert(!axis.isInGoal({3, 5, 4}));
+    assert(axis.heuristic({3, 5, 4}) > 0.0);
+
+    const baritone::GoalRunAway away({0, 10, 0}, 8);
+    assert(!away.isInGoal({7, 10, 0}));
+    assert(away.isInGoal({8, 30, 0}));
+    assert(away.heuristic({7, 10, 0}) > away.heuristic({8, 10, 0}));
+
+    const baritone::GoalThreeBlocks vein({4, 12, 9});
+    assert(vein.isInGoal({4, 12, 9}));
+    assert(vein.isInGoal({4, 10, 9}));
+    assert(!vein.isInGoal({4, 9, 9}));
 }
 
 void crossesOneBlockGapWithParkour() {
@@ -241,6 +436,91 @@ void alwaysUsesSafeWaterDropRegardlessOfWaterToggle() {
     }));
 }
 
+void miningDisablesWaterDrops() {
+    FakeWorld world;
+    world.solid.insert({0, 9, 0});
+    world.liquid.insert({1, 0, 0});
+
+    baritone::PathOptions options;
+    options.miningMode = true;
+    options.allowWater = false;
+    options.allowFall = false;
+    options.allowParkour = false;
+    options.allowBridge = false;
+    const auto movements = baritone::MovementGenerator::getMovements(world, {0, 10, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.type == baritone::MovementType::WaterDrop;
+    }));
+}
+
+void miningRefusesBreaksThatWouldReleaseLiquid() {
+    FakeWorld world;
+    world.solid.insert({1, 0, 0});
+    world.liquid.insert({1, 0, 1});
+
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowWater = false;
+    options.miningMode = true;
+    const auto movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, 0, 0} &&
+            movement.type == baritone::MovementType::BreakTraverse;
+    }));
+}
+
+void miningCanDigAOneWideVerticalShaft() {
+    FakeWorld world;
+    world.solid.insert({0, -2, 0});
+
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowFall = true;
+    options.allowWater = false;
+    options.miningMode = true;
+    const auto movements = baritone::MovementGenerator::getMovements(world, {0, 0, 0}, options);
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{0, -1, 0} &&
+            movement.type == baritone::MovementType::BreakDown;
+    }));
+}
+
+void miningBuildsOnlyAcrossSafeWater() {
+    FakeWorld waterWorld;
+    for (int x = 1; x <= 3; ++x) {
+        waterWorld.solid.erase({x, -1, 0});
+        waterWorld.liquid.insert({x, -1, 0});
+    }
+
+    baritone::PathOptions options;
+    options.allowWater = false;
+    options.allowBridge = true;
+    options.bridgeOnlyAfterFailure = false;
+    options.bridgeOverWaterOnly = true;
+    options.allowParkour = false;
+    options.miningMode = true;
+    auto movements = baritone::MovementGenerator::getMovements(waterWorld, {0, 0, 0}, options);
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{4, 0, 0} &&
+            movement.type == baritone::MovementType::Bridge;
+    }));
+
+    FakeWorld dryGapWorld;
+    for (int x = 1; x <= 3; ++x)
+        dryGapWorld.solid.erase({x, -1, 0});
+    movements = baritone::MovementGenerator::getMovements(dryGapWorld, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.type == baritone::MovementType::Bridge ||
+            movement.type == baritone::MovementType::BuildAscend;
+    }));
+
+    waterWorld.hazard.insert({2, -1, 0});
+    movements = baritone::MovementGenerator::getMovements(waterWorld, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.type == baritone::MovementType::Bridge;
+    }));
+}
+
 void modelsBedrockPlayerPhysics() {
     using namespace baritone::bedrock_physics;
     float walkVelocity = 0.f;
@@ -262,11 +542,20 @@ void modelsBedrockPlayerPhysics() {
 int main() {
     findsStraightPath();
     climbsOneBlock();
+    buildsAndClimbsOverGap();
     respectsStepUpToggle();
+    requiresFullPlayerHeightEverywhere();
     respectsDropToggle();
+    clearsUpperHeadCellBeforeDescending();
     avoidsHazards();
+    minesThroughWallWhenAllowed();
+    minesAnEnclosedStairStepUp();
+    findsACompactStaircaseThroughSolidRock();
+    respectsBreakToggleAndUnbreakableBlocks();
     returnsPartialAtUnloadedBoundary();
     exposesCalculationPaths();
+    exposesMovementCostsForEta();
+    supportsAdvancedBaritoneGoals();
     crossesOneBlockGapWithParkour();
     respectsParkourToggle();
     crossesThreeBlockGapWithSprintParkour();
@@ -274,6 +563,10 @@ int main() {
     crossesTenBlockGapAtConfiguredBridgeLimit();
     discoversEdgeConnectedDiagonalBridge();
     alwaysUsesSafeWaterDropRegardlessOfWaterToggle();
+    miningDisablesWaterDrops();
+    miningRefusesBreaksThatWouldReleaseLiquid();
+    miningCanDigAOneWideVerticalShaft();
+    miningBuildsOnlyAcrossSafeWater();
     modelsBedrockPlayerPhysics();
     std::cout << "Limiter core tests passed\n";
     return 0;

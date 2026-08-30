@@ -3,6 +3,7 @@
 #include "../../../Client.h"
 #include "../../../Client/GUI/ClickGui.h"
 #include "../../../Client/Module/ModuleManager.h"
+#include "../../../Client/Module/Modules/FullBrightModule.h"
 #include "../../../SDK/Client/Input/MouseDevice.h"
 #include "../../../SDK/MC.h"
 #include "../HookManager.h"
@@ -100,6 +101,14 @@ void MultiPlayerLevel__subTick(Level* level) {
     g_modMgr.onPostTick();
 }
 
+float BaseOptions_getGamma(void* options) {
+    static auto original = GET_HOOK(&BaseOptions_getGamma);
+    const auto fullBright = g_modMgr.getModule<FullBrightModule>();
+    if (fullBright != nullptr && fullBright->isEnabled())
+        return fullBright->getIntensity();
+    return original(options);
+}
+
 } // namespace
 
 void ClientHooks::init() {
@@ -111,4 +120,12 @@ void ClientHooks::init() {
 
     const auto gameVtable = *reinterpret_cast<uintptr_t**>(MC::getMinecraftGame());
     ADD_HOOK2(MinecraftGame_grabMouse, gameVtable[144]);
+
+    // Same-version Borion uses BaseOptions vtable slot 131 for gamma. Keeping
+    // this alongside the player-vision render hook covers both light-texture
+    // generation paths used by Bedrock dimensions and graphics modes.
+    if (auto* options = MC::getClientInstance()->getOptions()) {
+        const auto optionsVtable = *reinterpret_cast<uintptr_t**>(options);
+        ADD_HOOK2(BaseOptions_getGamma, optionsVtable[131]);
+    }
 }

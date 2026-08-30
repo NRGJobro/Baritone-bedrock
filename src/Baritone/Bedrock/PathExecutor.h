@@ -37,6 +37,12 @@ class PathExecutor {
     bool parkourSprintPrimed = false;
     int parkourSprintTicks = 0;
     int parkourLaunchTicks = 0;
+    std::size_t activeAscendIndex = static_cast<std::size_t>(-1);
+    bool ascendJumpIssued = false;
+    bool ascendWasAirborne = false;
+    int ascendLaunchTicks = 0;
+    int ascendRetries = 0;
+    int ascendRetryDelay = 0;
     bool movementModeCaptured = false;
     bool previousCameraRelativeMovement = true;
     bool previousRotationControlledByMovement = false;
@@ -74,13 +80,28 @@ class PathExecutor {
     bool waterHasDescended = false;
     float lastWaterFeetY = 0.f;
     float waterFacingYaw = 0.f;
+    std::size_t activeBreakIndex = static_cast<std::size_t>(-1);
+    BlockPos activeBreakPos{};
+    int obstructionBreakTicks = 0;
+    int previousMiningHotbarSlot = -1;
+    bool terrainBreakingAllowed = false;
+    int miningRecoveryTicks = 0;
+    int blockedTerrainTicks = 0;
+    bool waterAllowed = true;
+    bool bridgeOverWaterOnly = false;
 
     void clearInput(LocalPlayer* player);
     void resetParkourState();
     bool placeBridgeBlock(LocalPlayer* player, const BlockPos& target, FacingID preferredFace = FacingID::Unknown);
+    void selectBestTool(LocalPlayer* player, const BlockPos& target);
+    void restoreMiningHotbar(LocalPlayer* player);
 
 public:
-    void begin(std::vector<PathNode> path);
+    void begin(std::vector<PathNode> path, bool allowTerrainBreaking = false,
+        bool allowWater = true, bool waterOnlyBridge = false);
+    // Adopt a longer planner result without resetting movement state. This is
+    // used while A* continues beyond the temporary path already being walked.
+    [[nodiscard]] bool extendIfPrefix(const std::vector<PathNode>& candidate);
     ExecutionStatus tick(LocalPlayer* player, const ExecutionOptions& options);
     void applyVisualRotation(LocalPlayer* player);
     void beginVisualRotationRender(LocalPlayer* player);
@@ -90,6 +111,7 @@ public:
 
     [[nodiscard]] std::size_t getCurrentIndex() const;
     [[nodiscard]] const std::vector<PathNode>& getPath() const;
+    [[nodiscard]] double getEstimatedTicksRemaining() const;
 };
 
 } // namespace baritone

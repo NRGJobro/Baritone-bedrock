@@ -33,14 +33,58 @@ BlockState BedrockWorld::getBlock(const BlockPos& pos) const {
     if (legacy->getBlockId() == 0 || material->type == MaterialType::Air)
         return {.loaded = true};
 
-    const bool hazard = material->superHot || material->type == MaterialType::Lava || material->type == MaterialType::Fire ||
-        material->type == MaterialType::Cactus || material->type == MaterialType::PowderSnow;
+    std::string_view blockName = legacy->getName();
+    if (blockName.starts_with("minecraft:"))
+        blockName.remove_prefix(10);
+    // A few damage/debuff blocks use generic Plant or Solid materials, so the
+    // material flags alone do not identify them reliably across Bedrock
+    // versions.
+    const bool nameHazard = blockName == "sweet_berry_bush" || blockName == "wither_rose" ||
+        blockName == "cactus" || blockName == "fire" || blockName == "soul_fire" ||
+        blockName == "campfire" || blockName == "soul_campfire" ||
+        blockName == "magma_block" || blockName == "pointed_dripstone";
+    const bool hazard = material->superHot || material->type == MaterialType::Lava ||
+        material->type == MaterialType::Fire || material->type == MaterialType::Cactus ||
+        material->type == MaterialType::PowderSnow || nameHazard;
+
+    // Bedrock's generic material flags do not line up perfectly with player
+    // collision. Full tree leaves can report a non-solid Leaves material even
+    // though the player cannot walk through the canopy. Conversely, leaf
+    // litter and ordinary plants may carry a blocks-motion/solid flag while
+    // having no collision that obstructs movement.
+    const bool groundLeafLitter = blockName == "leaf_litter";
+    const bool treeLeaves = !groundLeafLitter &&
+        (material->type == MaterialType::Leaves || blockName == "leaves" ||
+            blockName == "leaves2" || blockName.ends_with("_leaves"));
+    // Cobwebs are plant-like/non-solid in some versions but are intentionally
+    // not clearance: routing through one can slow the player until the normal
+    // executor declares itself stuck.
+    const bool movementTrap = blockName == "web" || blockName == "cobweb";
+    const bool passableVegetation = !hazard && !movementTrap && !treeLeaves &&
+        (groundLeafLitter || material->type == MaterialType::Plant ||
+            material->type == MaterialType::NonSolid);
+    // Legacy numeric IDs beyond air are not stable across Bedrock versions.
+    // Treating IDs 210/217/416 as special caused ordinary deepslate-era blocks
+    // to invalidate mining routes immediately after a neighbor was removed.
+    const bool unbreakableByName = blockName == "bedrock" || blockName == "invisible_bedrock" ||
+        blockName == "barrier" ||
+        blockName == "structure_void" || blockName == "end_portal_frame" ||
+        blockName == "reinforced_deepslate" || blockName == "border_block" ||
+        blockName == "allow" || blockName == "deny";
+    // Bedrock's legacy ID 7 is stable and provides a defensive fallback when a
+    // server/resource pack exposes an unexpected name.
+    const bool unbreakable = legacy->getBlockId() == 7 || unbreakableByName ||
+        material->type == MaterialType::Barrier ||
+        material->type == MaterialType::StructureVoid;
+    const bool reportedSolid = legacy->isSolid() || material->solid || material->blocksMotion;
+    const bool solid = treeLeaves || movementTrap || (reportedSolid && !passableVegetation);
 
     return {
         .loaded = true,
-        .solid = legacy->isSolid() || material->solid || material->blocksMotion,
+        .solid = solid,
         .liquid = material->liquid,
-        .hazard = hazard
+        .hazard = hazard,
+        .breakable = solid && !unbreakable && !material->liquid && !hazard
     };
 }
 

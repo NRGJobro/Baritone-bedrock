@@ -7,6 +7,13 @@ int16_t BlockLegacy::getBlockId() {
     return hat::member_at<int16_t>(this, 0x1AA);
 }
 
+const std::string& BlockLegacy::getName() const {
+    // Same-version Borion NameInfo layout: the first HashedString begins at
+    // 0x78. Keeping this accessor here avoids duplicating SDK offsets in the
+    // higher-level mining process.
+    return hat::member_at<const HashedString>(this, 0x78).getString();
+}
+
 bool BlockLegacy::isSolid() {
     return hat::member_at<bool>(this, 0x17C);
 }

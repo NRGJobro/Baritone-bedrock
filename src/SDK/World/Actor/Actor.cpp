@@ -1,6 +1,7 @@
 #include "Actor.h"
 
 #include "../../../Memory/Sig/SignatureManager.h"
+#include "../../../Utils/Utils.h"
 
 EntityContext& Actor::getEntityContext() const {
     return hat::member_at<EntityContext>(const_cast<Actor*>(this), 0x8);
@@ -54,6 +55,13 @@ bool Actor::isInWater() const {
 
 void Actor::jumpFromGround() const {
     this->addComponent<JumpFromGroundRequestComponent>();
+}
+
+void Actor::swing() {
+    // Actor::swing is a native client-side animation entry point. Calling it
+    // alongside GameMode's destroy lifecycle keeps the first-person hand and
+    // remote arm animation in sync with automated mining.
+    Utils::CallVFunc<110, void, ActorSwingSource>(this, ActorSwingSource::Mine);
 }
 
 template <>

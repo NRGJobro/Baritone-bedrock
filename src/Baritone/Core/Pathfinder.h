@@ -23,6 +23,7 @@ enum class SearchStatus {
 struct PathNode {
     BlockPos pos;
     MovementType movement = MovementType::Start;
+    double costFromPrevious = 0.0;
 };
 
 class Pathfinder {
@@ -31,6 +32,7 @@ class Pathfinder {
         double f = std::numeric_limits<double>::infinity();
         BlockPos parent{};
         MovementType movement = MovementType::Start;
+        double movementCost = 0.0;
         bool hasParent = false;
         bool closed = false;
     };
@@ -61,7 +63,12 @@ class Pathfinder {
     SearchStatus status = SearchStatus::Idle;
     std::priority_queue<QueueEntry, std::vector<QueueEntry>, QueueCompare> open;
     std::unordered_map<BlockPos, Node, BlockPosHash> nodes;
+    // Movement generation asks about the same clearance/support cells many
+    // times. Keep a per-search cache so Bedrock block lookups are not repeated
+    // for every neighboring node expansion.
+    std::unordered_map<BlockPos, BlockState, BlockPosHash> worldCache;
     std::vector<PathNode> result;
+    double resultCost = 0.0;
 
     void finish(SearchStatus newStatus, const BlockPos& end);
     [[nodiscard]] std::vector<PathNode> reconstruct(const BlockPos& end) const;
@@ -74,6 +81,7 @@ public:
     [[nodiscard]] SearchStatus getStatus() const;
     [[nodiscard]] std::size_t getExpandedNodeCount() const;
     [[nodiscard]] const std::vector<PathNode>& getPath() const;
+    [[nodiscard]] double getPathCost() const;
     [[nodiscard]] std::vector<PathNode> getBestPathSoFar() const;
     [[nodiscard]] std::vector<PathNode> getMostRecentPath() const;
 };

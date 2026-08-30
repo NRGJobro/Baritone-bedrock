@@ -50,6 +50,14 @@ bool hasSafeSupport(const IWorld& world, const BlockPos& feet) {
     return support.loaded && support.solid && !support.hazard;
 }
 
+bool hasPlayerClearance(const IWorld& world, const BlockPos& feet, const bool allowLiquid) {
+    const auto feetBlock = world.getBlock(feet);
+    const auto headBlock = world.getBlock(feet.offset(0, 1, 0));
+    return feetBlock.loaded && headBlock.loaded && !feetBlock.solid && !headBlock.solid &&
+        !feetBlock.hazard && !headBlock.hazard &&
+        (allowLiquid || (!feetBlock.liquid && !headBlock.liquid));
+}
+
 bool liquidAt(BlockSource* source, const glm::ivec3& pos) {
     if (source == nullptr) return false;
     auto* block = source->getBlock(pos);
@@ -58,10 +66,25 @@ bool liquidAt(BlockSource* source, const glm::ivec3& pos) {
     return material != nullptr && material->liquid;
 }
 
+FacingID facingFromPlayer(const glm::vec3& player, const BlockPos& block) {
+    const glm::vec3 delta{player.x - (block.x + 0.5f), player.y - (block.y + 0.5f),
+        player.z - (block.z + 0.5f)};
+    const glm::vec3 magnitude{std::abs(delta.x), std::abs(delta.y), std::abs(delta.z)};
+    if (magnitude.y >= magnitude.x && magnitude.y >= magnitude.z)
+        return delta.y >= 0.f ? FacingID::Up : FacingID::Down;
+    if (magnitude.x >= magnitude.z)
+        return delta.x >= 0.f ? FacingID::East : FacingID::West;
+    return delta.z >= 0.f ? FacingID::South : FacingID::North;
+}
+
 } // namespace
 
-void PathExecutor::begin(std::vector<PathNode> newPath) {
+void PathExecutor::begin(std::vector<PathNode> newPath, const bool allowTerrainBreaking,
+    const bool allowWater, const bool waterOnlyBridge) {
     path = std::move(newPath);
+    terrainBreakingAllowed = allowTerrainBreaking;
+    waterAllowed = allowWater;
+    bridgeOverWaterOnly = waterOnlyBridge;
     index = path.size() > 1 ? 1 : path.size();
     lastProgressPosition = {};
     ticksWithoutProgress = 0;
@@ -79,7 +102,32 @@ void PathExecutor::begin(std::vector<PathNode> newPath) {
     waterDescentTicks = 0;
     waterVerticalSettledTicks = 0;
     waterHasDescended = false;
+    activeBreakIndex = static_cast<std::size_t>(-1);
+    obstructionBreakTicks = 0;
+    miningRecoveryTicks = 0;
+    blockedTerrainTicks = 0;
+    activeAscendIndex = static_cast<std::size_t>(-1);
+    ascendJumpIssued = false;
+    ascendWasAirborne = false;
+    ascendLaunchTicks = 0;
+    ascendRetries = 0;
+    ascendRetryDelay = 0;
     resetParkourState();
+}
+
+bool PathExecutor::extendIfPrefix(const std::vector<PathNode>& candidate) {
+    if (path.empty() || candidate.size() < path.size())
+        return false;
+
+    for (std::size_t candidateIndex = 0; candidateIndex < path.size(); ++candidateIndex) {
+        if (path[candidateIndex].pos != candidate[candidateIndex].pos ||
+            path[candidateIndex].movement != candidate[candidateIndex].movement)
+            return false;
+    }
+
+    path.insert(path.end(), candidate.begin() + static_cast<std::ptrdiff_t>(path.size()),
+        candidate.end());
+    return true;
 }
 
 ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& options) {
@@ -90,6 +138,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     if (index >= path.size()) {
         clearInput(player);
+        restoreMiningHotbar(player);
         return ExecutionStatus::Arrived;
     }
 
@@ -171,6 +220,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 resetParkourState();
                 if (index >= path.size()) {
                     clearInput(player);
+                    restoreMiningHotbar(player);
                     return ExecutionStatus::Arrived;
                 }
                 break;
@@ -282,6 +332,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             waterHasDescended = false;
             if (index >= path.size()) {
                 clearInput(player);
+                restoreMiningHotbar(player);
                 return ExecutionStatus::Arrived;
             }
         }
@@ -289,6 +340,282 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     if (!progressInitialized) {
         lastProgressPosition = feet;
         progressInitialized = true;
+    }
+
+    // Before opening a vertical shaft, move to the center of the current
+    // block. A path node is considered reached anywhere inside its voxel, but
+    // mining the floor from an edge can leave part of the hitbox supported and
+    // prevent the intended straight fall.
+    if (terrainBreakingAllowed && index > 0 && index < path.size() &&
+        path[index].movement == MovementType::BreakDown &&
+        playerFeetBlock == path[index - 1].pos) {
+        const glm::vec2 center{path[index - 1].pos.x + 0.5f,
+            path[index - 1].pos.z + 0.5f};
+        glm::vec2 correction = center - glm::vec2{feet.x, feet.z};
+        const float centerDistance = glm::length(correction);
+        if (centerDistance > 0.10f) {
+            correction = correction / centerDistance *
+                std::clamp(centerDistance * 2.5f, 0.12f, 0.55f);
+            const float yaw = player->getRotation().y * std::numbers::pi_v<float> / 180.f;
+            const glm::vec2 forward{-std::sin(yaw), std::cos(yaw)};
+            const glm::vec2 right{-forward.y, forward.x};
+            const float forwardAmount = std::clamp(glm::dot(forward, correction), -0.55f, 0.55f);
+            const float leftAmount = std::clamp(-glm::dot(right, correction), -0.55f, 0.55f);
+            if (const auto input = player->tryGet<MoveInputComponent>()) {
+                if (!movementModeCaptured) {
+                    previousCameraRelativeMovement = input->isCameraRelativeMovementEnabled;
+                    previousRotationControlledByMovement = input->isRotControlledByMoveDirection;
+                    movementModeCaptured = true;
+                }
+                input->isCameraRelativeMovementEnabled = false;
+                input->isRotControlledByMoveDirection = true;
+                const glm::vec2 movement{leftAmount, forwardAmount};
+                input->move = movement;
+                input->inputState.analogMoveVector = movement;
+                input->rawInputState.analogMoveVector = movement;
+                input->inputState.up = input->rawInputState.up = forwardAmount > 0.35f;
+                input->inputState.down = input->rawInputState.down = forwardAmount < -0.35f;
+                input->inputState.left = input->rawInputState.left = leftAmount > 0.35f;
+                input->inputState.right = input->rawInputState.right = leftAmount < -0.35f;
+                input->inputState.sprintDown = input->rawInputState.sprintDown = false;
+                input->inputState.jumpDown = input->rawInputState.jumpDown = false;
+                input->inputState.jumpInputCurrentlyDown = false;
+                input->rawInputState.jumpInputCurrentlyDown = false;
+                input->inputState.sneakDown = input->rawInputState.sneakDown = false;
+                input->sprinting = false;
+                input->jumping = false;
+                input->sneaking = false;
+                input->persistSneak = false;
+                input->wantDown = false;
+                input->moveInputStateLocked = false;
+            }
+            ticksWithoutProgress = 0;
+            return ExecutionStatus::Running;
+        }
+    }
+
+    // A mining process owns this policy for the lifetime of its route. Inspect
+    // the real swept 1x2 clearance on every transition instead of trusting the
+    // movement label chosen during planning: falling blocks, world updates, or
+    // a tight diagonal can otherwise turn an ordinary node into an obstruction.
+    if (terrainBreakingAllowed && index < path.size() && MC::getRegion() != nullptr) {
+        const BedrockWorld world(MC::getRegion());
+        std::vector<BlockPos> clearanceCells;
+        clearanceCells.reserve(8);
+        const auto addCell = [&](const BlockPos& pos) {
+            if (std::ranges::find(clearanceCells, pos) == clearanceCells.end())
+                clearanceCells.push_back(pos);
+        };
+        const auto addColumn = [&](const BlockPos& feetPos) {
+            // Clear the visible upper block first, then the feet block below
+            // it. This gives descending tunnel work a natural top-to-bottom
+            // order while still clearing the complete two-block column.
+            addCell(feetPos.offset(0, 1, 0));
+            addCell(feetPos);
+        };
+
+        // If the actor is already clipping a newly placed/fallen ceiling,
+        // clear that first before attempting any horizontal movement.
+        addCell(playerFeetBlock.offset(0, 1, 0));
+
+        // Recovery steering may approach the active path node from a physical
+        // block other than its planned parent. Clear the real first step too,
+        // otherwise the executor can push into that wall until stall recovery.
+        const int actualDx = std::clamp(path[index].pos.x - playerFeetBlock.x, -1, 1);
+        const int actualDz = std::clamp(path[index].pos.z - playerFeetBlock.z, -1, 1);
+        const int actualDistance = std::max(
+            std::abs(path[index].pos.x - playerFeetBlock.x),
+            std::abs(path[index].pos.z - playerFeetBlock.z));
+        if (actualDistance > 1)
+            addColumn(playerFeetBlock.offset(actualDx, 0, actualDz));
+        if (actualDx != 0 && actualDz != 0) {
+            addColumn(playerFeetBlock.offset(actualDx, 0, 0));
+            addColumn(playerFeetBlock.offset(0, 0, actualDz));
+        }
+        if (path[index].pos.y > playerFeetBlock.y)
+            addCell(playerFeetBlock.offset(0, 2, 0));
+
+        if (index > 0) {
+            const auto& source = path[index - 1].pos;
+            const auto movement = path[index].movement;
+            const int dx = std::clamp(path[index].pos.x - source.x, -1, 1);
+            const int dz = std::clamp(path[index].pos.z - source.z, -1, 1);
+            const int distance = std::max(
+                std::abs(path[index].pos.x - source.x),
+                std::abs(path[index].pos.z - source.z));
+
+            if (movement == MovementType::Ascend || movement == MovementType::BreakAscend)
+                addCell(source.offset(0, 2, 0));
+
+            if (movement == MovementType::Descend || movement == MovementType::BreakDescend ||
+                movement == MovementType::Fall || movement == MovementType::WaterDrop) {
+                // A descent begins with a horizontal step at the source Y. Its
+                // current-height feet/head column must be mined before the
+                // actor can fall into the lower destination column. Keep this
+                // ahead of the destination in clearanceCells: selecting the
+                // lower block first looks like the miner is breaking through
+                // an unseen wall below the visible tunnel opening.
+                addColumn(source.offset(dx, 0, dz));
+            }
+
+            // The player's width sweeps both orthogonal columns during a
+            // diagonal. They must be cleared at feet and head height as well.
+            if (dx != 0 && dz != 0) {
+                addColumn(source.offset(dx, 0, 0));
+                addColumn(source.offset(0, 0, dz));
+            }
+            for (int step = 1; step < distance; ++step)
+                addColumn(source.offset(dx * step, 0, dz * step));
+        }
+
+        // Check the destination only after the immediate/current-height work
+        // cells above. This makes descending routes clear from the player's
+        // visible frontier toward the lower landing instead of bottom-to-top.
+        addColumn(path[index].pos);
+
+        std::optional<BlockPos> obstruction;
+        bool foundUnbreakable = false;
+        bool foundUnsafe = false;
+        const auto neededAsFutureSupport = [&](const BlockPos& candidate) {
+            const std::size_t first = index > 0 ? index - 1 : index;
+            for (std::size_t cursor = first; cursor < path.size(); ++cursor) {
+                if (cursor + 1 == index && path[index].movement == MovementType::BreakDown)
+                    continue;
+                if (path[cursor].pos.offset(0, -1, 0) == candidate)
+                    return true;
+            }
+            return false;
+        };
+        for (const auto& candidate : clearanceCells) {
+            const auto state = world.getBlock(candidate);
+            if (state.hazard || (!waterAllowed && state.liquid)) {
+                foundUnsafe = true;
+                break;
+            }
+            if (state.solid) {
+                // Never let recovery clearance destroy a block that this same
+                // route expects to stand or jump on later. The controller also
+                // rejects planned conflicts; this is the last-moment guard for
+                // physical/path-index drift.
+                if (neededAsFutureSupport(candidate)) {
+                    foundUnsafe = true;
+                    break;
+                }
+                if (!state.breakable) {
+                    foundUnbreakable = true;
+                    break;
+                }
+                // Revalidate immediately before every destroy call. Flowing
+                // water may have reached a neighbor after A* built the route.
+                if (!waterAllowed && MovementGenerator::wouldExposeLiquid(world, candidate)) {
+                    foundUnsafe = true;
+                    break;
+                }
+                obstruction = candidate;
+                break;
+            }
+        }
+
+        if (foundUnbreakable) {
+            clearInput(player);
+            activeBreakIndex = static_cast<std::size_t>(-1);
+            obstructionBreakTicks = 0;
+            // Do not throw away the route on the first transient/stale block
+            // classification after a break. If the obstruction is genuinely
+            // permanent, the bounded stall path performs one normal recovery.
+            if (++blockedTerrainTicks > 80)
+                return ExecutionStatus::Stuck;
+            return ExecutionStatus::Running;
+        }
+
+        if (foundUnsafe) {
+            clearInput(player);
+            activeBreakIndex = static_cast<std::size_t>(-1);
+            obstructionBreakTicks = 0;
+            // The world changed underneath the route. Never walk or mine into
+            // a hazardous block; let the controller replan with the current
+            // hazard map instead.
+            return ExecutionStatus::OffPath;
+        }
+
+        if (obstruction) {
+            blockedTerrainTicks = 0;
+            auto* gameMode = player->getGameMode();
+            if (gameMode == nullptr)
+                return ExecutionStatus::NoPlayer;
+            if (activeBreakIndex != index || activeBreakPos != *obstruction) {
+                activeBreakIndex = index;
+                activeBreakPos = *obstruction;
+                obstructionBreakTicks = 0;
+                selectBestTool(player, *obstruction);
+            }
+
+            if (const auto input = player->tryGet<MoveInputComponent>()) {
+                input->move = {};
+                input->inputState.analogMoveVector = {};
+                input->rawInputState.analogMoveVector = {};
+                input->inputState.up = input->inputState.down = false;
+                input->inputState.left = input->inputState.right = false;
+                input->rawInputState.up = input->rawInputState.down = false;
+                input->rawInputState.left = input->rawInputState.right = false;
+                input->inputState.sprintDown = input->rawInputState.sprintDown = false;
+                input->inputState.jumpDown = input->rawInputState.jumpDown = false;
+                input->sprinting = false;
+                input->jumping = false;
+            }
+
+            const glm::ivec3 target{obstruction->x, obstruction->y, obstruction->z};
+            const auto playerPosition = player->getPosition();
+            const auto face = facingFromPlayer(playerPosition, *obstruction);
+            bool destroyed = false;
+            player->swing();
+            if (obstructionBreakTicks == 0)
+                gameMode->startDestroyBlock(target, face, destroyed);
+            else
+                gameMode->continueDestroyBlock(target, face, playerPosition, destroyed);
+            ++obstructionBreakTicks;
+            // Breaking and newly opened descents can shift the actor away from
+            // the exact block-center rail. Keep a short recovery window after
+            // the obstruction disappears instead of invalidating that route.
+            miningRecoveryTicks = 30;
+            ticksWithoutProgress = 0;
+            ticksOutsidePath = 0;
+            if (obstructionBreakTicks > 240) {
+                gameMode->stopDestroyBlock(target);
+                return ExecutionStatus::Stuck;
+            }
+            return ExecutionStatus::Running;
+        }
+
+        activeBreakIndex = static_cast<std::size_t>(-1);
+        obstructionBreakTicks = 0;
+        blockedTerrainTicks = 0;
+        if (miningRecoveryTicks > 0)
+            --miningRecoveryTicks;
+    }
+
+    // Terrain removal can drop or nudge the actor onto a later route block in
+    // one physics tick. Resynchronize exact physical matches before applying
+    // lateral corridor rejection, otherwise a valid descent is thrown away.
+    if (terrainBreakingAllowed && player->isOnGround() && index + 1 < path.size()) {
+        const std::size_t resyncEnd = std::min(path.size() - 1, index + 8);
+        std::size_t matched = path.size();
+        for (std::size_t cursor = index + 1; cursor <= resyncEnd; ++cursor) {
+            if (path[cursor].pos == playerFeetBlock) {
+                matched = cursor;
+                break;
+            }
+        }
+        if (matched < path.size()) {
+            // Keep the physically matched node active. It still needs normal
+            // centre/turn completion below; consuming it here made mining turn
+            // toward the following segment from the edge of the block.
+            index = matched;
+            lastProgressPosition = feet;
+            ticksWithoutProgress = 0;
+            ticksOutsidePath = 0;
+            resetParkourState();
+        }
     }
 
     // Baritone's short-fall override allows momentum to carry a fall through
@@ -318,6 +645,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             ticksOutsidePath = 0;
             if (index >= path.size()) {
                 clearInput(player);
+                restoreMiningHotbar(player);
                 return ExecutionStatus::Arrived;
             }
         }
@@ -333,7 +661,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // column while the feet are already supported at its bottom.  Keep
         // node completion active across the complete water block instead of
         // freezing it at the narrower ground-movement tolerance.
-        const float corridorWidth = path[index].movement == MovementType::Swim ? 1.05f : 0.60f;
+        const float corridorWidth = path[index].movement == MovementType::Swim ? 1.05f :
+            (terrainBreakingAllowed ? (miningRecoveryTicks > 0 ? 1.35f : 1.10f) : 0.82f);
         outsideActiveCorridor = activeProjection.lateralDistance > corridorWidth;
     }
 
@@ -447,6 +776,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 ticksOutsidePath = 0;
                 if (index >= path.size()) {
                     clearInput(player);
+                    restoreMiningHotbar(player);
                     return ExecutionStatus::Arrived;
                 }
                 continue;
@@ -468,6 +798,32 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 actual.progress >= 1.f && actual.progress <= 1.45f && actual.lateralDistance <= 0.35f;
         }
 
+        // Entering a waypoint's block is not enough when the mining route is
+        // about to turn. Reach its centreline first so the player's full-width
+        // collision box clears the inside corner before steering rotates to
+        // the next segment.
+        if (reached && player->isOnGround() &&
+            index > 0 && index + 1 < path.size() &&
+            (node.movement == MovementType::Traverse ||
+                node.movement == MovementType::Diagonal ||
+                node.movement == MovementType::BreakTraverse)) {
+            const auto& previous = path[index - 1].pos;
+            const auto& next = path[index + 1].pos;
+            const int incomingX = std::clamp(node.pos.x - previous.x, -1, 1);
+            const int incomingZ = std::clamp(node.pos.z - previous.z, -1, 1);
+            const int outgoingX = std::clamp(next.x - node.pos.x, -1, 1);
+            const int outgoingZ = std::clamp(next.z - node.pos.z, -1, 1);
+            const bool turnWaypoint = incomingX != outgoingX || incomingZ != outgoingZ ||
+                next.y != node.pos.y;
+            if (turnWaypoint) {
+                const float centreX = static_cast<float>(node.pos.x) + 0.5f;
+                const float centreZ = static_cast<float>(node.pos.z) + 0.5f;
+                const float offsetX = feet.x - centreX;
+                const float offsetZ = feet.z - centreZ;
+                reached = offsetX * offsetX + offsetZ * offsetZ <= 0.18f * 0.18f;
+            }
+        }
+
         if (!reached)
             break;
         ++index;
@@ -475,6 +831,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     if (index >= path.size()) {
         clearInput(player);
+        restoreMiningHotbar(player);
         return ExecutionStatus::Arrived;
     }
 
@@ -482,7 +839,15 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // deviations a brief correction window, then let A* calculate a genuine
     // route from the player's real block if the corridor cannot be rejoined.
     if (outsideActiveCorridor && !waterDescentActive) {
-        if (++ticksOutsidePath > 8) {
+        // Ordinary routes receive enough time to center from any point within
+        // their starting block. Mining gets additional hysteresis because a
+        // broken support or downward transition legitimately displaces it.
+        ++ticksOutsidePath;
+        // Mining can clear the real recovery step toward its active node. Do
+        // not discard the complete A* result for lateral drift after every
+        // block; the independent no-progress detector still replans if this
+        // recovery genuinely stalls. Ordinary navigation stays strict.
+        if (!terrainBreakingAllowed && ticksOutsidePath > 16) {
             clearInput(player);
             return ExecutionStatus::OffPath;
         }
@@ -507,14 +872,143 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     }
 
     const auto& node = path[index];
+
+    const bool isAscending = node.movement == MovementType::Ascend ||
+        node.movement == MovementType::BreakAscend ||
+        node.movement == MovementType::BuildAscend;
+    if (isAscending) {
+        if (activeAscendIndex != index) {
+            activeAscendIndex = index;
+            ascendJumpIssued = false;
+            ascendWasAirborne = false;
+            ascendLaunchTicks = 0;
+            ascendRetries = 0;
+            ascendRetryDelay = 0;
+        } else {
+            if (ascendRetryDelay > 0)
+                --ascendRetryDelay;
+            if (ascendJumpIssued) {
+                ++ascendLaunchTicks;
+                if (!player->isOnGround())
+                    ascendWasAirborne = true;
+                // A low/early launch can bump the head and land back in the
+                // source voxel. Re-arm this same ascent after a brief
+                // centering window instead of throwing away the whole path.
+                if (player->isOnGround() && playerFeetBlock != node.pos &&
+                    (ascendWasAirborne || ascendLaunchTicks > 6)) {
+                    if (++ascendRetries > 3) {
+                        clearInput(player);
+                        return ExecutionStatus::Stuck;
+                    }
+                    ascendJumpIssued = false;
+                    ascendWasAirborne = false;
+                    ascendLaunchTicks = 0;
+                    ascendRetryDelay = 3;
+                    ticksWithoutProgress = 0;
+                }
+            }
+        }
+    } else {
+        activeAscendIndex = static_cast<std::size_t>(-1);
+        ascendJumpIssued = false;
+        ascendWasAirborne = false;
+        ascendLaunchTicks = 0;
+        ascendRetries = 0;
+        ascendRetryDelay = 0;
+    }
+
+    // A break can invalidate the support relationship that was true when the
+    // path was planned. Never keep jumping from a missing/stale support block;
+    // hand the route back to A* so it can choose a valid approach.
+    // During the jump the rounded feet cell can temporarily advance above the
+    // real support block. Only validate support while the actor is grounded;
+    // airborne ticks belong to the same active jump and must not trigger a
+    // false off-path recovery.
+    if (terrainBreakingAllowed && isAscending && player->isOnGround() &&
+        MC::getRegion() != nullptr) {
+        const BedrockWorld world(MC::getRegion());
+        const bool currentSupported = hasSafeSupport(world, playerFeetBlock);
+        const bool destinationSupported = hasSafeSupport(world, node.pos);
+        if (!currentSupported || !destinationSupported) {
+            clearInput(player);
+            return ExecutionStatus::OffPath;
+        }
+    }
+
+    // Revalidate the complete 1x2 player column immediately before movement.
+    // This protects regular navigation from changed blocks and prevents the
+    // executor from repeatedly walking or jumping into a low ceiling. Mining
+    // transitions reach here only after both obstructions have been cleared.
+    if (MC::getRegion() != nullptr) {
+        const BedrockWorld world(MC::getRegion());
+        bool clear = hasPlayerClearance(world, node.pos, waterAllowed);
+        if (clear && index > 0 && node.movement == MovementType::Diagonal) {
+            const auto& source = path[index - 1].pos;
+            const int dx = std::clamp(node.pos.x - source.x, -1, 1);
+            const int dz = std::clamp(node.pos.z - source.z, -1, 1);
+            clear = hasPlayerClearance(world, source.offset(dx, 0, 0), waterAllowed) &&
+                hasPlayerClearance(world, source.offset(0, 0, dz), waterAllowed);
+        }
+        if (clear && index > 0 &&
+            (node.movement == MovementType::Ascend || node.movement == MovementType::BreakAscend ||
+                node.movement == MovementType::BuildAscend)) {
+            // A one-block jump sweeps the player's head through the cell above
+            // the source before the feet arrive at the raised destination.
+            clear = hasPlayerClearance(world, path[index - 1].pos.offset(0, 1, 0), waterAllowed);
+        }
+        if (clear && index > 0 &&
+            (node.movement == MovementType::Descend || node.movement == MovementType::BreakDescend ||
+                node.movement == MovementType::Fall || node.movement == MovementType::WaterDrop)) {
+            const auto& source = path[index - 1].pos;
+            const int dx = std::clamp(node.pos.x - source.x, -1, 1);
+            const int dz = std::clamp(node.pos.z - source.z, -1, 1);
+            clear = hasPlayerClearance(world, source.offset(dx, 0, dz), waterAllowed);
+        }
+        if (!clear) {
+            clearInput(player);
+            // Mining already inspected every breakable swept cell above. A
+            // one-tick world update, exposed liquid/hazard, or stale chunk
+            // state must not cause an immediate OffPath/replan after every
+            // destroyed block. Holding still lets the existing 80-tick stall
+            // detector decide whether a real recovery is necessary.
+            if (terrainBreakingAllowed)
+                return ExecutionStatus::Running;
+            return ExecutionStatus::OffPath;
+        }
+    }
+
     const bool isBridge = node.movement == MovementType::Bridge;
-    if (isBridge && activeBridgeIndex != index) {
+    const bool isBuildAscend = node.movement == MovementType::BuildAscend;
+    if ((isBridge || isBuildAscend) && activeBridgeIndex != index) {
         activeBridgeIndex = index;
         bridgeNextStep = 1;
         bridgePlacementWait = 0;
     }
-    if (!isBridge)
+    if (!isBridge && !isBuildAscend)
         activeBridgeIndex = static_cast<std::size_t>(-1);
+    if (isBuildAscend && index > 0) {
+        const auto& source = path[index - 1].pos;
+        const int dx = std::clamp(node.pos.x - source.x, -1, 1);
+        const int dz = std::clamp(node.pos.z - source.z, -1, 1);
+        if (bridgePlacementWait > 0)
+            --bridgePlacementWait;
+        if (bridgePlacementWait == 0 && bridgeNextStep == 1) {
+            // BuildAscend's raised destination is supported by the block we
+            // place directly ahead at the source level. Place it from the
+            // source side, then let the normal one-block jump input take over.
+            const BlockPos placementTarget = source.offset(dx, 0, dz);
+            const glm::vec2 axis{static_cast<float>(dx), static_cast<float>(dz)};
+            const glm::vec2 sourceCenter{source.x + 0.5f, source.z + 0.5f};
+            const glm::vec2 playerOffset{feet.x - sourceCenter.x, feet.z - sourceCenter.y};
+            const float along = glm::dot(playerOffset, glm::normalize(axis));
+            const FacingID supportFace = dx > 0 ? FacingID::West : dx < 0 ? FacingID::East :
+                (dz > 0 ? FacingID::North : FacingID::South);
+            if (along >= -0.35f && placeBridgeBlock(player, placementTarget, supportFace)) {
+                bridgeNextStep = 2;
+                bridgePlacementWait = 2;
+            }
+        }
+    }
     if (isBridge && index > 0) {
         const auto& source = path[index - 1].pos;
         const int dx = std::clamp(node.pos.x - source.x, -1, 1);
@@ -545,6 +1039,18 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             }
             const FacingID supportFace = placementDx > 0 ? FacingID::West : placementDx < 0 ? FacingID::East :
                 placementDz > 0 ? FacingID::North : FacingID::South;
+            if (bridgeOverWaterOnly && MC::getRegion() != nullptr) {
+                const BedrockWorld world(MC::getRegion());
+                const auto placementState = world.getBlock(placementTarget);
+                // A solid cell means this segment was already placed. Any new
+                // construction target must still contain safe water; if the
+                // world changed to air or lava, discard and recalculate.
+                if (!placementState.loaded || placementState.hazard ||
+                    (!placementState.solid && !placementState.liquid)) {
+                    clearInput(player);
+                    return ExecutionStatus::OffPath;
+                }
+            }
             glm::vec2 bridgeAxis{static_cast<float>(dx), static_cast<float>(dz)};
             if (glm::length(bridgeAxis) > 0.001f)
                 bridgeAxis = glm::normalize(bridgeAxis);
@@ -592,9 +1098,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
     }
     const bool ordinaryMovement = node.movement == MovementType::Traverse ||
-        node.movement == MovementType::Diagonal;
+        node.movement == MovementType::Diagonal || node.movement == MovementType::BreakTraverse;
     bool upcomingVerticalOrParkour = false;
     bool upcomingTurn = false;
+    bool tightObstacleTurn = false;
     if (index > 0 && index + 1 < path.size()) {
         const auto& next = path[index + 1];
         const auto& source = path[index - 1].pos;
@@ -604,9 +1111,42 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         const int nextZ = std::clamp(next.pos.z - node.pos.z, -1, 1);
         upcomingTurn = currentX != nextX || currentZ != nextZ;
         upcomingVerticalOrParkour = next.movement == MovementType::Ascend ||
+            next.movement == MovementType::BreakAscend || next.movement == MovementType::BreakDescend ||
+            next.movement == MovementType::BreakDown ||
             next.movement == MovementType::Descend || next.movement == MovementType::Fall ||
             next.movement == MovementType::WaterDrop ||
-            next.movement == MovementType::Parkour;
+            next.movement == MovementType::Parkour ||
+            next.movement == MovementType::BuildAscend;
+
+        // Smooth look-ahead is useful in open terrain but can swing the
+        // player's 0.6-block-wide body into a trunk or wall beside an inside
+        // corner. Detect solid columns around both halves of the turn and use
+        // exact block-centre steering there.
+        if (ordinaryMovement && upcomingTurn && !upcomingVerticalOrParkour &&
+            next.pos.y == node.pos.y && MC::getRegion() != nullptr) {
+            const BedrockWorld world(MC::getRegion());
+            const std::array<BlockPos, 2> turnCenters{{source, node.pos}};
+            for (const auto& center : turnCenters) {
+                for (int offsetX = -1; offsetX <= 1 && !tightObstacleTurn; ++offsetX) {
+                    for (int offsetZ = -1; offsetZ <= 1; ++offsetZ) {
+                        if (offsetX == 0 && offsetZ == 0)
+                            continue;
+                        const auto candidate = center.offset(offsetX, 0, offsetZ);
+                        if (candidate == source || candidate == node.pos || candidate == next.pos)
+                            continue;
+                        const auto feetState = world.getBlock(candidate);
+                        const auto headState = world.getBlock(candidate.offset(0, 1, 0));
+                        if ((feetState.loaded && feetState.solid) ||
+                            (headState.loaded && headState.solid)) {
+                            tightObstacleTurn = true;
+                            break;
+                        }
+                    }
+                }
+                if (tightObstacleTurn)
+                    break;
+            }
+        }
     }
     // On an exposed corner, Baritone-style safe-walk is preferable to trying
     // to compensate after momentum has already carried the player over air.
@@ -643,6 +1183,42 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const glm::vec3 target{static_cast<float>(node.pos.x) + 0.5f, static_cast<float>(node.pos.y), static_cast<float>(node.pos.z) + 0.5f};
     glm::vec2 direction{target.x - feet.x, target.z - feet.z};
     glm::vec2 facingDirection = direction;
+    bool ascendTakeoffReady = !isAscending;
+    float ascendApproachScale = 1.f;
+    if (isAscending && index > 0) {
+        const auto& source = path[index - 1].pos;
+        glm::vec2 axis{static_cast<float>(node.pos.x - source.x),
+            static_cast<float>(node.pos.z - source.z)};
+        const float axisLength = glm::length(axis);
+        if (axisLength > 0.001f)
+            axis /= axisLength;
+
+        const glm::vec2 sourceCenter{static_cast<float>(source.x) + 0.5f,
+            static_cast<float>(source.z) + 0.5f};
+        const glm::vec2 sourceOffset{feet.x - sourceCenter.x, feet.z - sourceCenter.y};
+        const float along = glm::dot(sourceOffset, axis);
+        const float lateral = glm::length(sourceOffset - axis * along);
+        const float alongSpeed = glm::dot(glm::vec2{measuredMotion.x, measuredMotion.z}, axis);
+        const float predictedAlong = along + std::max(0.f, alongSpeed);
+        const bool buildReady = !isBuildAscend ||
+            (bridgeNextStep > 1 && bridgePlacementWait == 0);
+        // Bedrock can report the block as air one or two simulation ticks
+        // before the local collision shape fully disappears. Let freshly
+        // mined ascent clearance settle before committing the jump.
+        const bool terrainReady = !terrainBreakingAllowed || miningRecoveryTicks <= 27;
+        // Launch from the forward half of the source block while centered on
+        // the movement axis. This leaves enough horizontal travel to clear the
+        // step without jumping from the rear edge into the source ceiling.
+        ascendTakeoffReady = player->isOnGround() && playerFeetBlock == source &&
+            lateral <= 0.24f && along >= 0.04f && predictedAlong >= 0.12f &&
+            along <= 0.58f && ascendRetryDelay == 0 && buildReady && terrainReady;
+        if (!ascendJumpIssued && !ascendTakeoffReady) {
+            const glm::vec2 takeoffPoint = sourceCenter + axis * 0.18f;
+            direction = takeoffPoint - glm::vec2{feet.x, feet.z};
+            facingDirection = axis;
+            ascendApproachScale = 0.62f;
+        }
+    }
     if (isBridge && index > 0) {
         const auto& source = path[index - 1].pos;
         glm::vec2 bridgeDirection{static_cast<float>(node.pos.x - source.x), static_cast<float>(node.pos.z - source.z)};
@@ -701,7 +1277,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     }
     bool fallCoasting = false;
     bool fallBraking = false;
-    if ((node.movement == MovementType::Descend || node.movement == MovementType::Fall ||
+    if ((node.movement == MovementType::Descend || node.movement == MovementType::BreakDescend || node.movement == MovementType::Fall ||
         node.movement == MovementType::WaterDrop) &&
         index > 0 && !player->isOnGround()) {
         const auto& source = path[index - 1].pos;
@@ -805,19 +1381,35 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
     }
 
-    // Use a short look-ahead tangent on ordinary ground segments. The search
-    // remains block-based for collision correctness, while steering follows a
-    // smooth arc through corners instead of making eight-direction snaps.
-    if (!waterDescentActive && ordinaryMovement && index > 0 && index + 1 < path.size()) {
+    // Keep ordinary movement on the exact block-center rail. The old
+    // look-ahead tangent is retained below for reference but disabled because
+    // it can move the collision box into an inside corner before centering.
+    if (false && !terrainBreakingAllowed && !waterDescentActive && ordinaryMovement &&
+        !tightObstacleTurn &&
+        index > 0 && index + 1 < path.size()) {
         const auto& source = path[index - 1].pos;
         const auto& next = path[index + 1];
-        if ((next.movement == MovementType::Traverse || next.movement == MovementType::Diagonal) &&
+        if ((next.movement == MovementType::Traverse || next.movement == MovementType::Diagonal ||
+            next.movement == MovementType::BreakTraverse) &&
             next.pos.y == node.pos.y) {
             glm::vec2 currentTangent{static_cast<float>(node.pos.x - source.x),
                 static_cast<float>(node.pos.z - source.z)};
             glm::vec2 nextTangent{static_cast<float>(next.pos.x - node.pos.x),
                 static_cast<float>(next.pos.z - node.pos.z)};
-            if (glm::length(currentTangent) > 0.001f && glm::length(nextTangent) > 0.001f) {
+            const int currentX = std::clamp(node.pos.x - source.x, -1, 1);
+            const int currentZ = std::clamp(node.pos.z - source.z, -1, 1);
+            const int nextX = std::clamp(next.pos.x - node.pos.x, -1, 1);
+            const int nextZ = std::clamp(next.pos.z - node.pos.z, -1, 1);
+            bool sweptCornerClear = true;
+            if ((currentX != nextX || currentZ != nextZ) && MC::getRegion() != nullptr) {
+                const BedrockWorld world(MC::getRegion());
+                // Curving before a waypoint sweeps the 0.6-block-wide body
+                // through this inside column, which an L-shaped block route
+                // does not otherwise occupy.
+                sweptCornerClear = hasPlayerClearance(world, source.offset(nextX, 0, nextZ), waterAllowed);
+            }
+            if (sweptCornerClear && glm::length(currentTangent) > 0.001f &&
+                glm::length(nextTangent) > 0.001f) {
                 currentTangent = glm::normalize(currentTangent);
                 nextTangent = glm::normalize(nextTangent);
                 const float segmentProgress = std::clamp(
@@ -835,7 +1427,11 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // ordinary ground traversal; parkour and falls retain their physics-driven
     // launch/landing inputs.
     const float humanApproachScale = ordinaryMovement
-        ? std::clamp(distance / 1.15f, 0.82f, 1.f)
+        ? (tightObstacleTurn
+            ? std::clamp(distance / 0.95f, 0.48f, 0.74f)
+            : (terrainBreakingAllowed && upcomingTurn
+            ? std::clamp(distance / 1.00f, 0.50f, 0.75f)
+            : std::clamp(distance / 1.15f, 0.82f, 1.f)))
         : 1.f;
     const float waterApproachScale = approachingWaterColumn
         ? std::clamp(glm::length(glm::vec2{
@@ -936,7 +1532,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     }
     const float pathMovementScale = waterDescentActive
         ? 1.f
-        : cautiousScale * humanApproachScale;
+        : cautiousScale * humanApproachScale * ascendApproachScale;
     const float forwardAmount = parkourAirBrake ? -0.24f :
         (parkourAirRelease ? 0.f : (parkourApproachBrake ? -0.16f :
         (parkourApproachRelease ? 0.f :
@@ -980,7 +1576,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // sprint requested during safe-walk as configured instead of forcibly
         // clearing it. Wide ordinary paths run at full vanilla speed.
         const bool sprintSafe = isParkour ||
-            (ordinaryMovement && !upcomingVerticalOrParkour && (!narrowFooting || precisionSneak));
+            (ordinaryMovement && !upcomingVerticalOrParkour && (!narrowFooting || precisionSneak) &&
+                !tightObstacleTurn && (!terrainBreakingAllowed || !upcomingTurn));
         const float sprintThreshold = precisionSneak ? 0.45f : (isParkour ? 0.55f : 0.8f);
         const bool shouldSprint = options.sprint && forwardAmount > sprintThreshold &&
             (!isParkour || parkourNeedsSprint) && !parkourAirRelease &&
@@ -1011,7 +1608,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
     }
 
-    const bool shouldJump = (node.movement == MovementType::Ascend && target.y > feet.y + 0.2f) ||
+    const bool shouldJump = (isAscending && !ascendJumpIssued && ascendTakeoffReady &&
+        target.y > feet.y + 0.2f) ||
         (node.movement == MovementType::WaterDrop && player->isOnGround()) || requestParkourJump;
     const bool shouldSwimUp = node.movement == MovementType::Swim && target.y > feet.y + 0.15f;
     const bool shouldSwimDown = verticalSwimDown ||
@@ -1021,6 +1619,11 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const bool holdJump = (shouldJump && player->isOnGround()) || shouldSwimUp;
     if (holdJump)
         player->jumpFromGround();
+    if (holdJump && isAscending && player->isOnGround()) {
+        ascendJumpIssued = true;
+        ascendWasAirborne = false;
+        ascendLaunchTicks = 0;
+    }
     if (requestParkourJump) {
         parkourJumpIssued = true;
         parkourLaunchTicks = 0;
@@ -1050,6 +1653,12 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
 void PathExecutor::stop(LocalPlayer* player) {
     clearInput(player);
+    if (activeBreakIndex != static_cast<std::size_t>(-1) && player != nullptr &&
+        player->getGameMode() != nullptr) {
+        const glm::ivec3 target{activeBreakPos.x, activeBreakPos.y, activeBreakPos.z};
+        player->getGameMode()->stopDestroyBlock(target);
+    }
+    restoreMiningHotbar(player);
     path.clear();
     index = 0;
     ticksWithoutProgress = 0;
@@ -1072,6 +1681,18 @@ void PathExecutor::stop(LocalPlayer* player) {
     waterHasDescended = false;
     bridgePitchActive = false;
     bridgePitch = 0.f;
+    activeBreakIndex = static_cast<std::size_t>(-1);
+    obstructionBreakTicks = 0;
+    terrainBreakingAllowed = false;
+    bridgeOverWaterOnly = false;
+    miningRecoveryTicks = 0;
+    blockedTerrainTicks = 0;
+    activeAscendIndex = static_cast<std::size_t>(-1);
+    ascendJumpIssued = false;
+    ascendWasAirborne = false;
+    ascendLaunchTicks = 0;
+    ascendRetries = 0;
+    ascendRetryDelay = 0;
 }
 
 bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target, const FacingID preferredFace) {
@@ -1082,29 +1703,79 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
     if (existing != nullptr && existing->getBlockLegacy() != nullptr && existing->getBlockLegacy()->isSolid()) return true;
     auto* supplies = player->getSupplies();
     if (supplies == nullptr || supplies->getInventory() == nullptr) return false;
-    bool hasBlock = false;
+    int blockSlot = -1;
     for (int slot = 0; slot < 9; ++slot) {
         auto* stack = supplies->getInventory()->getItem(slot);
         if (stack != nullptr && stack->isValid() && stack->getItem() != nullptr && stack->getItem()->isBlock()) {
-            supplies->setSelectedHotbarSlot(slot);
-            hasBlock = true;
+            blockSlot = slot;
             break;
         }
     }
-    if (!hasBlock || player->getGameMode() == nullptr) return false;
+    if (blockSlot < 0 || player->getGameMode() == nullptr) return false;
+
+    // Building temporarily needs a placeable block in the active hand. Keep
+    // the player's original hotbar selection and restore it as soon as the
+    // placement call returns, so bridge/build-ascend actions never leave the
+    // client holding an arbitrary scaffolding block.
+    const int previousSlot = supplies->getSelectedHotbarSlot();
+    supplies->setSelectedHotbarSlot(blockSlot);
+    const auto restoreSlot = [&]() {
+        supplies->setSelectedHotbarSlot(previousSlot);
+    };
+
     static constexpr glm::ivec3 supports[] = {{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
     for (int face = 0; face < 6; ++face) {
         const auto support = pos + supports[face];
         auto* block = source->getBlock(support);
         if (block == nullptr || block->getBlockLegacy() == nullptr || !block->getBlockLegacy()->isSolid()) continue;
         auto place = pos;
-        if (player->getGameMode()->buildBlock(&place, static_cast<FacingID>(face), false)) return true;
+        if (player->getGameMode()->buildBlock(&place, static_cast<FacingID>(face), false)) {
+            restoreSlot();
+            return true;
+        }
     }
     if (preferredFace != FacingID::Unknown) {
         auto place = pos;
-        if (player->getGameMode()->buildBlock(&place, preferredFace, false)) return true;
+        if (player->getGameMode()->buildBlock(&place, preferredFace, false)) {
+            restoreSlot();
+            return true;
+        }
     }
+    restoreSlot();
     return false;
+}
+
+void PathExecutor::selectBestTool(LocalPlayer* player, const BlockPos& target) {
+    auto* source = MC::getRegion();
+    if (player == nullptr || source == nullptr || player->getSupplies() == nullptr)
+        return;
+    auto* inventory = player->getSupplies()->getInventory();
+    auto* block = source->getBlock(target.x, target.y, target.z);
+    if (inventory == nullptr || block == nullptr)
+        return;
+    if (previousMiningHotbarSlot < 0)
+        previousMiningHotbarSlot = player->getSupplies()->getSelectedHotbarSlot();
+    int bestSlot = previousMiningHotbarSlot;
+    float bestSpeed = 0.f;
+    for (int slot = 0; slot < 9; ++slot) {
+        auto* stack = inventory->getItem(slot);
+        if (stack == nullptr || !stack->isValid())
+            continue;
+        const float speed = stack->getDestroySpeed(block);
+        if (speed > bestSpeed) {
+            bestSpeed = speed;
+            bestSlot = slot;
+        }
+    }
+    player->getSupplies()->setSelectedHotbarSlot(bestSlot);
+}
+
+void PathExecutor::restoreMiningHotbar(LocalPlayer* player) {
+    if (previousMiningHotbarSlot < 0)
+        return;
+    if (player != nullptr && player->getSupplies() != nullptr)
+        player->getSupplies()->setSelectedHotbarSlot(previousMiningHotbarSlot);
+    previousMiningHotbarSlot = -1;
 }
 
 void PathExecutor::suspend(LocalPlayer* player) {
@@ -1245,5 +1916,12 @@ void PathExecutor::resetParkourState() {
 std::size_t PathExecutor::getCurrentIndex() const { return index; }
 
 const std::vector<PathNode>& PathExecutor::getPath() const { return path; }
+
+double PathExecutor::getEstimatedTicksRemaining() const {
+    double ticks = 0.0;
+    for (std::size_t cursor = index; cursor < path.size(); ++cursor)
+        ticks += path[cursor].costFromPrevious;
+    return ticks;
+}
 
 } // namespace baritone
