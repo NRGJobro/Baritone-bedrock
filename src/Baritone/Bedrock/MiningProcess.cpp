@@ -141,8 +141,8 @@ bool isVisibleFromPlayer(LocalPlayer* player, BlockSource* region, const BlockPo
                 static_cast<int>(std::floor(point.y)), static_cast<int>(std::floor(point.z))};
             if (cell == target)
                 break;
-            auto* block = blockLegacyAt(region, cell);
-            if (block != nullptr && block->isSolid()) {
+            const auto block = BedrockWorld(region).getBlock(cell);
+            if (!block.loaded || block.solid || block.liquid || block.hazard) {
                 blocked = true;
                 break;
             }
@@ -597,7 +597,24 @@ void MiningProcess::tick(BaritoneController& controller) {
     if (breakingTarget) {
         const auto target = *breakingTarget;
         const auto currentTargetState = world.getBlock(target);
-        if (!currentTargetState.solid || !matches(blockLegacyAt(region, target))) {
+        if (!currentTargetState.loaded) {
+            if (breakTicks > 0)
+                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+            breakingTarget.reset();
+            breakTicks = 0;
+            controller.stop();
+            return;
+        }
+        if (currentTargetState.solid && breakingTargetCountsGoal &&
+            !matches(blockLegacyAt(region, target))) {
+            if (breakTicks > 0)
+                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+            breakingTarget.reset();
+            breakTicks = 0;
+            controller.stop();
+            return;
+        }
+        if (!currentTargetState.solid) {
             const bool wasGoal = breakingTargetCountsGoal;
             breakingTargetCountsGoal = true;
             if (!wasGoal) {
@@ -623,7 +640,7 @@ void MiningProcess::tick(BaritoneController& controller) {
             return;
         }
 
-        if (MovementGenerator::wouldExposeLiquid(world, target)) {
+        if (!currentTargetState.breakable || MovementGenerator::wouldExposeLiquid(world, target)) {
             if (breakTicks > 0)
                 player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
             blacklist.insert(target);
@@ -637,7 +654,10 @@ void MiningProcess::tick(BaritoneController& controller) {
         }
 
         const auto position = player->getPosition();
-        if (distanceToBlock(position, target) > 6.10f) {
+        if (distanceToBlock(position, target) > 6.10f ||
+            !isVisibleFromPlayer(player, region, target)) {
+            if (breakTicks > 0)
+                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
             breakingTarget.reset();
             breakTicks = 0;
             controller.goTo(std::make_shared<GoalGetToBlock>(target));
@@ -701,22 +721,42 @@ void MiningProcess::tick(BaritoneController& controller) {
             return;
         }
 
-        // The composite goal can be satisfied while all remaining blocks are
-        // still behind the current wall. Do not call goTo again from the same
-        // player cell; that produces an immediate one-node "Already at the
-        // goal" result every tick and floods chat/the renderer. Occluded
-        // targets are reserved for the explicit failed-path fallback below.
-        if (!noVisibleTargetPosition || *noVisibleTargetPosition != playerBlock)
-            noVisibleTargetPosition = playerBlock;
-        return;
+        // Clear the first visible obstruction, never mine ore through a wall.
+        // A satisfied adjacency goal must either make progress or retire the
+        // inaccessible patch instead of idling here forever.
+        for (const auto& target : targets) {
+            const glm::vec3 ray = glm::vec3{target.x + 0.5f, target.y + 0.5f, target.z + 0.5f} - playerPosition;
+            const int steps = std::max(1, static_cast<int>(std::ceil(glm::length(ray) / 0.05f)));
+            for (int step = 1; step < steps; ++step) {
+                const auto cell = actorBlock(playerPosition + ray * (static_cast<float>(step) / steps));
+                const auto state = world.getBlock(cell);
+                if (!state.loaded || state.liquid || state.hazard)
+                    break;
+                if (!state.solid)
+                    continue;
+                // Keep the player's current footing intact during direct mining.
+                if (state.breakable && cell != playerBlock.offset(0, -1, 0) &&
+                    distanceToBlock(playerPosition, cell) <= 6.10f &&
+                    !MovementGenerator::wouldExposeLiquid(world, cell) &&
+                    isVisibleFromPlayer(player, region, cell)) {
+                    beginBreaking(cell);
+                    breakingTargetCountsGoal = fixedTargetMode
+                        ? std::ranges::find(fixedTargets, cell) != fixedTargets.end()
+                        : matches(blockLegacyAt(region, cell));
+                    return;
+                }
+                break;
+            }
+        }
+        for (const auto& target : targets)
+            blacklist.insert(target);
+        activePatch.clear();
+        candidates.clear();
+        controller.stop();
     }
 
     if (controller.getState() == ControllerState::Failed) {
-        // A* can legitimately fail when the nearest ore is enclosed by solid
-        // blocks. If the block is still within Bedrock's interaction range,
-        // issue the native destroy lifecycle directly instead of requiring a
-        // walkable face or line of sight. This is the wall-mining fallback;
-        // targets outside interaction range still use ordinary pathing below.
+        // A failed route may still leave a visible target in reach.
         const auto position = player->getPosition();
         auto& targets = activePatch.empty() ? candidates : activePatch;
         auto directTarget = targets.end();
@@ -725,7 +765,8 @@ void MiningProcess::tick(BaritoneController& controller) {
             if (!matches(blockLegacyAt(region, *iterator)))
                 continue;
             const float distance = distanceToBlock(position, *iterator);
-            if (distance > 6.10f || distance >= bestDistance)
+            if (distance > 6.10f || distance >= bestDistance ||
+                !isVisibleFromPlayer(player, region, *iterator))
                 continue;
             bestDistance = distance;
             directTarget = iterator;

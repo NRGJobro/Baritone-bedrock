@@ -68,23 +68,12 @@ class PathExecutor {
     int bridgeNextStep = 1;
     int bridgePlacementWait = 0;
     std::size_t activeBridgeIndex = static_cast<std::size_t>(-1);
-    bool waterDescentActive = false;
-    int waterColumnX = 0;
-    int waterColumnZ = 0;
-    int waterBottomY = 0;
-    bool waterBottomKnown = false;
-    int waterPathBottomY = 0;
-    std::size_t waterExitIndex = static_cast<std::size_t>(-1);
-    int waterDescentTicks = 0;
-    int waterVerticalSettledTicks = 0;
-    bool waterHasDescended = false;
-    float lastWaterFeetY = 0.f;
-    float waterFacingYaw = 0.f;
     std::size_t activeBreakIndex = static_cast<std::size_t>(-1);
     BlockPos activeBreakPos{};
     int obstructionBreakTicks = 0;
     int previousMiningHotbarSlot = -1;
     bool terrainBreakingAllowed = false;
+    bool plannedBreakingOnly = true;
     int miningRecoveryTicks = 0;
     int blockedTerrainTicks = 0;
     bool waterAllowed = true;
@@ -98,7 +87,7 @@ class PathExecutor {
 
 public:
     void begin(std::vector<PathNode> path, bool allowTerrainBreaking = false,
-        bool allowWater = true, bool waterOnlyBridge = false);
+        bool allowWater = true, bool waterOnlyBridge = false, bool plannedBreakingOnly = true);
     // Adopt a longer planner result without resetting movement state. This is
     // used while A* continues beyond the temporary path already being walked.
     [[nodiscard]] bool extendIfPrefix(const std::vector<PathNode>& candidate);

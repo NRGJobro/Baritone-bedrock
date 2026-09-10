@@ -6,7 +6,28 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-add_compile_options(/MP)
+if(MSVC)
+    add_compile_options(/MP)
+endif()
+
+option(BORION_BUILD_TESTS "Build pathfinder regression tests" OFF)
+option(BORION_CORE_TESTS_ONLY "Build core tests without client dependencies" OFF)
+if(BORION_BUILD_TESTS OR BORION_CORE_TESTS_ONLY)
+    enable_testing()
+    add_executable(BaritoneCoreTests tests/PathfinderTests.cpp
+        src/Baritone/Core/Goal.cpp src/Baritone/Core/Movement.cpp
+        src/Baritone/Core/Pathfinder.cpp)
+    target_include_directories(BaritoneCoreTests PRIVATE src)
+    if(MSVC)
+        target_compile_options(BaritoneCoreTests PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(BaritoneCoreTests PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME BaritoneCoreTests COMMAND BaritoneCoreTests)
+endif()
+if(BORION_CORE_TESTS_ONLY)
+    return()
+endif()
 
 include(include/FetchLibraries.cmake)
 

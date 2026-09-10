@@ -32,6 +32,9 @@ struct Movement {
 
 class MovementGenerator {
 public:
+    [[nodiscard]] static bool canDropToWater(const IWorld& world, const BlockPos& from, const BlockPos& to);
+    [[nodiscard]] static bool isPlannedBreakCell(const BlockPos& from, const BlockPos& to,
+        MovementType type, const BlockPos& cell);
     [[nodiscard]] static std::vector<Movement> getMovements(const IWorld& world, const BlockPos& from, const PathOptions& options);
     static void getMovements(const IWorld& world, const BlockPos& from,
         const PathOptions& options, std::vector<Movement>& result);
@@ -39,6 +42,7 @@ public:
     [[nodiscard]] static bool canStandAt(const IWorld& world, const BlockPos& pos, const PathOptions& options);
     // Removing a solid cell lets liquid above or on any horizontal side flow
     // into the newly opened tunnel. Liquid below cannot flow upward.
+    // Unknown neighbors are unsafe until loaded and checked as well.
     [[nodiscard]] static bool wouldExposeLiquid(const IWorld& world, const BlockPos& pos);
 };
 

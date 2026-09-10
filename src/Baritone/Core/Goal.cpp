@@ -11,9 +11,9 @@ namespace baritone {
 namespace {
 
 double octile(const BlockPos& from, const BlockPos& to) {
-    const auto dx = static_cast<double>(std::abs(from.x - to.x));
-    const auto dz = static_cast<double>(std::abs(from.z - to.z));
-    const auto dy = static_cast<double>(std::abs(from.y - to.y));
+    const auto dx = std::abs(static_cast<double>(from.x) - to.x);
+    const auto dz = std::abs(static_cast<double>(from.z) - to.z);
+    const auto dy = static_cast<double>(to.y) - from.y;
     const auto diagonal = std::min(dx, dz);
     const auto straight = std::max(dx, dz) - diagonal;
     const double horizontal = (diagonal * std::numbers::sqrt2 + straight) * action_costs::sprintOneBlock;
@@ -62,13 +62,15 @@ int GoalYLevel::getY() const { return y; }
 GoalNear::GoalNear(const BlockPos target, const int radius) : target(target), radius(std::max(0, radius)) {}
 
 bool GoalNear::isInGoal(const BlockPos& pos) const {
-    const auto dx = pos.x - target.x;
-    const auto dy = pos.y - target.y;
-    const auto dz = pos.z - target.z;
-    return dx * dx + dy * dy + dz * dz <= radius * radius;
+    const double dx = static_cast<double>(pos.x) - target.x;
+    const double dy = static_cast<double>(pos.y) - target.y;
+    const double dz = static_cast<double>(pos.z) - target.z;
+    return dx * dx + dy * dy + dz * dz <= static_cast<double>(radius) * radius;
 }
 
 double GoalNear::heuristic(const BlockPos& pos) const {
+    if (isInGoal(pos))
+        return 0.0;
     return std::max(0.0, octile(pos, target) - static_cast<double>(radius));
 }
 

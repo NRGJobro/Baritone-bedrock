@@ -18,14 +18,14 @@ bool swimmable(const IWorld& world, const BlockPos& pos, const PathOptions& opti
         return false;
     const auto feet = world.getBlock(pos);
     const auto head = world.getBlock(pos.offset(0, 1, 0));
-    return feet.loaded && head.loaded && feet.liquid && !feet.hazard && !head.solid && !head.hazard;
+    return passable(feet, options) && passable(head, options) && feet.liquid && !head.liquid;
 }
 
 bool safeWaterLanding(const IWorld& world, const BlockPos& pos) {
     const auto feet = world.getBlock(pos);
     const auto head = world.getBlock(pos.offset(0, 1, 0));
     return feet.loaded && head.loaded && feet.liquid && !feet.hazard &&
-        !head.solid && !head.hazard;
+        !feet.solid && !head.solid && !head.hazard && !head.liquid;
 }
 
 double breakCostForBlock(const IWorld& world, const BlockPos& pos, const PathOptions& options) {
@@ -36,13 +36,13 @@ double breakCostForBlock(const IWorld& world, const BlockPos& pos, const PathOpt
         return 0.0;
     if (!options.allowBreak || !block.breakable)
         return action_costs::costInf;
-    if (options.miningMode && MovementGenerator::wouldExposeLiquid(world, pos))
+    if (MovementGenerator::wouldExposeLiquid(world, pos))
         return action_costs::costInf;
     // Mining is deliberately preferred for short underground corridors. The
     // executor still waits for Bedrock's real destroy progress; this planning
     // cost only prevents A* from choosing a huge detour around a wall when a
     // nearby break-and-walk route is available.
-    return 1.0;
+    return options.miningMode ? 1.0 : 24.0;
 }
 
 double breakCostToOccupy(const IWorld& world, const BlockPos& pos, const PathOptions& options) {
@@ -65,6 +65,34 @@ bool safeBridgeWater(const IWorld& world, const BlockPos& supportPos) {
 
 } // namespace
 
+bool MovementGenerator::canDropToWater(const IWorld& world, const BlockPos& from, const BlockPos& to) {
+    if (to.y >= from.y || from.y - to.y > 384 ||
+        std::abs(to.x - from.x) + std::abs(to.z - from.z) != 1 || !safeWaterLanding(world, to))
+        return false;
+    for (int y = to.y + 1; y <= from.y + 1; ++y) {
+        const auto state = world.getBlock({to.x, y, to.z});
+        if (!state.loaded || state.solid || state.hazard || state.liquid)
+            return false;
+    }
+    return true;
+}
+
+bool MovementGenerator::isPlannedBreakCell(const BlockPos& from, const BlockPos& to,
+    const MovementType type, const BlockPos& cell) {
+    if (type == MovementType::BreakDown)
+        return cell == to;
+    if (type == MovementType::BreakTraverse || type == MovementType::BreakAscend ||
+        type == MovementType::BreakDescend) {
+        if (cell == to || cell == to.offset(0, 1, 0))
+            return true;
+        if (type == MovementType::BreakAscend)
+            return cell == from.offset(0, 2, 0);
+        if (type == MovementType::BreakDescend)
+            return cell == to.offset(0, 2, 0);
+    }
+    return false;
+}
+
 bool MovementGenerator::wouldExposeLiquid(const IWorld& world, const BlockPos& pos) {
     // Fluids flow down and sideways, never upward. Checking the block above
     // plus four horizontal neighbors models every immediate opening caused by
@@ -75,7 +103,7 @@ bool MovementGenerator::wouldExposeLiquid(const IWorld& world, const BlockPos& p
     }};
     return std::ranges::any_of(flowSources, [&](const BlockPos& offset) {
         const auto neighbor = world.getBlock(pos.offset(offset.x, offset.y, offset.z));
-        return neighbor.loaded && neighbor.liquid;
+        return !neighbor.loaded || neighbor.liquid;
     });
 }
 
@@ -86,6 +114,8 @@ bool MovementGenerator::canOccupy(const IWorld& world, const BlockPos& pos, cons
 bool MovementGenerator::canStandAt(const IWorld& world, const BlockPos& pos, const PathOptions& options) {
     if (!canOccupy(world, pos, options))
         return false;
+    if (world.getBlock(pos).liquid || world.getBlock(pos.offset(0, 1, 0)).liquid)
+        return swimmable(world, pos, options);
 
     const auto below = world.getBlock(pos.offset(0, -1, 0));
     return (below.loaded && below.solid && !below.hazard) || swimmable(world, pos, options);
@@ -108,15 +138,17 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
     if (result.capacity() < 24)
         result.reserve(24);
 
-    const bool fromWater = swimmable(world, from, options);
-    const bool descendingWaterColumn = fromWater && swimmable(world, from.offset(0, -1, 0), options);
+    const bool fromWater = options.allowWater && world.getBlock(from).liquid;
+    // A submerged start recovers toward breathable water before travelling.
+    // Never generate dives as shortcuts beneath a lake or shoreline.
+    if (fromWater && world.getBlock(from.offset(0, 1, 0)).liquid) {
+        const auto up = from.offset(0, 1, 0);
+        if (canOccupy(world, from, options) && canOccupy(world, up, options))
+            result.push_back({up, MovementType::Swim, action_costs::walkInWater * 1.5});
+        return;
+    }
 
     for (const auto [dx, dz] : directions) {
-        // When a continuous water column is directly below, stay in that
-        // stream. Lateral water choices are deferred until the bottom, which
-        // matches the fastest vanilla descent behavior.
-        if (descendingWaterColumn && (dx != 0 || dz != 0))
-            continue;
         const bool diagonal = dx != 0 && dz != 0;
         if (diagonal && !options.allowDiagonal)
             continue;
@@ -173,14 +205,14 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
         // Build a short supported step over a gap, then jump onto the placed
         // block. This gives mining a believable way up when normal one-block
         // stairs are unavailable without enabling long parkour jumps.
-        if (!diagonal && options.allowBridge && !options.bridgeOverWaterOnly &&
+        if (!diagonal && options.allowAscend && options.allowBridge && !options.bridgeOnlyAfterFailure && !options.bridgeOverWaterOnly &&
             canStandAt(world, from, options) &&
             passable(world.getBlock(adjacent), options) &&
             !canStandAt(world, adjacent, options)) {
             const auto raised = adjacent.offset(0, 1, 0);
             if (canOccupy(world, raised, options))
                 result.push_back({raised, MovementType::BuildAscend,
-                    action_costs::jumpOneBlock() + 12.0});
+                    action_costs::jumpOneBlock() + 40.0});
         }
 
 
@@ -202,7 +234,7 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                 feetSweepCost >= action_costs::costInf ||
                 upperSweepCost >= action_costs::costInf
                 ? action_costs::costInf
-                : destinationCost + feetSweepCost + upperSweepCost;
+                : destinationCost + upperSweepCost;
             if (hasSafeSupport(world, down) && breakCost > 0.0 && breakCost < action_costs::costInf)
                 result.push_back({down, MovementType::BreakDescend,
                     action_costs::walkOffBlock + action_costs::fallTicks(1) + breakCost});
@@ -213,7 +245,7 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
         // deliberately excludes this shortcut because entering water can
         // derail the active mining route.
         const auto descentEntryHead = world.getBlock(adjacent.offset(0, 1, 0));
-        if (!options.miningMode && !diagonal && descentEntryHead.loaded && !descentEntryHead.solid &&
+        if (options.allowWater && options.allowFall && !fromWater && !options.miningMode && !diagonal && descentEntryHead.loaded && !descentEntryHead.solid &&
             !descentEntryHead.hazard) {
             constexpr int maximumLoadedDrop = 384;
             for (int drop = 1; drop <= maximumLoadedDrop; ++drop) {
@@ -223,7 +255,7 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                 if (!feetBlock.loaded || !headBlock.loaded || feetBlock.solid || headBlock.solid ||
                     feetBlock.hazard || headBlock.hazard)
                     break;
-                if (safeWaterLanding(world, cell)) {
+                if (safeWaterLanding(world, cell) && canDropToWater(world, from, cell)) {
                     result.push_back({cell, MovementType::WaterDrop,
                         action_costs::walkOffBlock + action_costs::fallTicks(drop) * 0.72 +
                             action_costs::centerAfterFall});
@@ -253,44 +285,6 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                     action_costs::walkOffBlock + action_costs::fallTicks(drop) + action_costs::centerAfterFall});
                 break;
             }
-        }
-    }
-
-    if (fromWater) {
-        const auto up = from.offset(0, 1, 0);
-        const auto down = from.offset(0, -1, 0);
-        // Prefer an outward exit at the bottom of a water descent when one is
-        // available. This prevents a visually misleading straight vertical
-        // drop followed by an abrupt turn on the next node.
-        static constexpr std::array<std::pair<int, int>, 4> exits{{
-            {1, 0}, {-1, 0}, {0, 1}, {0, -1}
-        }};
-        for (const auto [dx, dz] : exits) {
-            const auto exit = down.offset(dx, 0, dz);
-            if (canStandAt(world, exit, options))
-                result.push_back({exit, MovementType::Swim, action_costs::walkInWater + action_costs::centerAfterFall});
-        }
-        if (swimmable(world, up, options))
-            result.push_back({up, MovementType::Swim, action_costs::walkInWater * 1.5});
-        if (swimmable(world, down, options))
-            // Descending with the stream is the preferred water movement: it
-            // is faster than fighting the current laterally and keeps the
-            // route centered until an exit exists at the bottom.
-            result.push_back({down, MovementType::Swim, action_costs::walkInWater * 0.25});
-    }
-
-    // A mandatory water-drop landing still needs a way back onto land when
-    // normal water routing is disabled. Permit only an immediate shoreline
-    // exit; this does not enable general swimming behind the Water toggle.
-    if (!options.allowWater && safeWaterLanding(world, from)) {
-        static constexpr std::array<std::pair<int, int>, 4> shoreline{{
-            {1, 0}, {-1, 0}, {0, 1}, {0, -1}
-        }};
-        for (const auto [dx, dz] : shoreline) {
-            const auto exit = from.offset(dx, 0, dz);
-            if (canStandAt(world, exit, options))
-                result.push_back({exit, MovementType::Swim,
-                    action_costs::walkInWater + action_costs::centerAfterFall});
         }
     }
 
@@ -333,7 +327,7 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                     continue;
                 result.push_back({landing, MovementType::Bridge,
                     action_costs::walkOneBlock * distance +
-                        static_cast<double>(gapStep) * 9.0});
+                        static_cast<double>(gapStep) * 40.0});
                 break;
             }
         }
@@ -394,7 +388,7 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                 if (clear)
                     result.push_back({landing, MovementType::Bridge,
                         action_costs::walkOneBlock * (diagonalBridge ? distance * std::numbers::sqrt2 : distance) +
-                            static_cast<double>(requiredBlocks) * 9.0});
+                            static_cast<double>(requiredBlocks) * 40.0});
             }
         }
     }
@@ -429,7 +423,8 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                 if (!clearArc)
                     break;
 
-                if (canStandAt(world, candidate, options)) {
+                if (canStandAt(world, candidate, options) &&
+                    passable(world.getBlock(candidate.offset(0, 2, 0)), options)) {
                     const auto overshoot = candidate.offset(dx, 0, dz);
                     const auto overFeet = world.getBlock(overshoot);
                     const auto overHead = world.getBlock(overshoot.offset(0, 1, 0));
@@ -441,7 +436,7 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
                     break;
                 }
 
-                if (options.allowParkourAscend && distance <= 3) {
+                if (options.allowAscend && options.allowParkourAscend && distance <= 3) {
                     const auto raised = candidate.offset(0, 1, 0);
                     if (canStandAt(world, raised, options) &&
                         passable(world.getBlock(candidate.offset(0, 3, 0)), options)) {

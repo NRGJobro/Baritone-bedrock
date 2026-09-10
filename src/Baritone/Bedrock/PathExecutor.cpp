@@ -80,9 +80,10 @@ FacingID facingFromPlayer(const glm::vec3& player, const BlockPos& block) {
 } // namespace
 
 void PathExecutor::begin(std::vector<PathNode> newPath, const bool allowTerrainBreaking,
-    const bool allowWater, const bool waterOnlyBridge) {
+    const bool allowWater, const bool waterOnlyBridge, const bool onlyPlannedBreaks) {
     path = std::move(newPath);
     terrainBreakingAllowed = allowTerrainBreaking;
+    plannedBreakingOnly = onlyPlannedBreaks;
     waterAllowed = allowWater;
     bridgeOverWaterOnly = waterOnlyBridge;
     index = path.size() > 1 ? 1 : path.size();
@@ -96,12 +97,6 @@ void PathExecutor::begin(std::vector<PathNode> newPath, const bool allowTerrainB
     cameraYawCaptured = false;
     renderRotationOverrideActive = false;
     lastRotationRenderMillis = 0;
-    waterDescentActive = false;
-    waterBottomKnown = false;
-    waterExitIndex = static_cast<std::size_t>(-1);
-    waterDescentTicks = 0;
-    waterVerticalSettledTicks = 0;
-    waterHasDescended = false;
     activeBreakIndex = static_cast<std::size_t>(-1);
     obstructionBreakTicks = 0;
     miningRecoveryTicks = 0;
@@ -169,174 +164,6 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const bool inWaterBlocks = liquidAt(MC::getRegion(), feetCell) ||
         liquidAt(MC::getRegion(), feetCell + glm::ivec3{0, 1, 0});
 
-    // Recovery for a fast/accidental descent: the physical player may reach
-    // the bottom before the executor has activated or consumed the individual
-    // vertical swim nodes. Find that pending column in the route and splice
-    // directly to its first horizontal exit instead of steering back upward.
-    {
-        const std::size_t recoveryEnd = std::min(path.size(), index + 96);
-        for (std::size_t candidate = index; candidate < recoveryEnd; ++candidate) {
-            if (candidate == 0) continue;
-            const auto& previous = path[candidate - 1].pos;
-            const auto& current = path[candidate];
-            if (current.movement != MovementType::Swim ||
-                current.pos.x != previous.x || current.pos.z != previous.z ||
-                current.pos.y >= previous.y)
-                continue;
-
-            const int columnX = current.pos.x;
-            const int columnZ = current.pos.z;
-            std::size_t exitIndex = candidate;
-            int pathBottomY = current.pos.y;
-            while (exitIndex < path.size() &&
-                path[exitIndex].movement == MovementType::Swim &&
-                path[exitIndex].pos.x == columnX && path[exitIndex].pos.z == columnZ) {
-                pathBottomY = std::min(pathBottomY, path[exitIndex].pos.y);
-                ++exitIndex;
-            }
-
-            const float dx = feet.x - (static_cast<float>(columnX) + 0.5f);
-            const float dz = feet.z - (static_cast<float>(columnZ) + 0.5f);
-            const bool nearColumn = dx * dx + dz * dz <= 1.35f * 1.35f;
-            const bool alreadyAtBottom = feet.y <= static_cast<float>(pathBottomY) + 1.75f;
-            bool supportedAtBottom = false;
-            if (MC::getRegion() != nullptr) {
-                const BedrockWorld world(MC::getRegion());
-                supportedAtBottom = hasSafeSupport(world, playerFeetBlock);
-            }
-            const bool physicallyDescendingOrWet = inWaterBlocks ||
-                measuredMotion.y < -0.025f || supportedAtBottom;
-            if (nearColumn && alreadyAtBottom && physicallyDescendingOrWet && exitIndex > index) {
-                index = exitIndex;
-                lastProgressPosition = feet;
-                ticksWithoutProgress = 0;
-                ticksOutsidePath = 0;
-                waterDescentActive = false;
-                waterBottomKnown = false;
-                waterExitIndex = static_cast<std::size_t>(-1);
-                waterDescentTicks = 0;
-                waterVerticalSettledTicks = 0;
-                waterHasDescended = false;
-                resetParkourState();
-                if (index >= path.size()) {
-                    clearInput(player);
-                    restoreMiningHotbar(player);
-                    return ExecutionStatus::Arrived;
-                }
-                break;
-            }
-        }
-    }
-
-    // Enter an explicit downward-column state as soon as the active path is
-    // about to descend in water. This state survives node/Y mismatches caused
-    // by Bedrock's faster crouched descent.
-    if (!waterDescentActive) {
-        const std::size_t scanEnd = std::min(path.size() - 1, index + 5);
-        for (std::size_t candidate = index; candidate <= scanEnd; ++candidate) {
-            if (candidate == 0) continue;
-            const auto& previous = path[candidate - 1].pos;
-            const auto& current = path[candidate];
-            if (current.movement == MovementType::Swim &&
-                current.pos.x == previous.x && current.pos.z == previous.z &&
-                current.pos.y < previous.y &&
-                horizontalDistance(feet, glm::vec3{
-                    static_cast<float>(current.pos.x) + 0.5f,
-                    feet.y,
-                    static_cast<float>(current.pos.z) + 0.5f}) <= 2.75f) {
-                waterDescentActive = true;
-                waterColumnX = current.pos.x;
-                waterColumnZ = current.pos.z;
-                waterBottomKnown = false;
-                waterDescentTicks = 0;
-                waterVerticalSettledTicks = 0;
-                waterHasDescended = false;
-                lastWaterFeetY = feet.y;
-                waterFacingYaw = player->getRotation().y;
-
-                waterExitIndex = candidate;
-                while (waterExitIndex < path.size() &&
-                    path[waterExitIndex].movement == MovementType::Swim &&
-                    path[waterExitIndex].pos.x == waterColumnX &&
-                    path[waterExitIndex].pos.z == waterColumnZ)
-                    ++waterExitIndex;
-                waterPathBottomY = waterExitIndex > candidate
-                    ? path[waterExitIndex - 1].pos.y
-                    : current.pos.y;
-
-                // Read the actual loaded column to find the floor beneath the
-                // water. This is independent of actor flags and path-node Y
-                // bookkeeping, both of which can lag during fast descent.
-                if (MC::getRegion() != nullptr) {
-                    const BedrockWorld world(MC::getRegion());
-                    bool sawLiquid = false;
-                    for (int y = current.pos.y; y >= current.pos.y - 96; --y) {
-                        const glm::ivec3 blockPos{waterColumnX, y, waterColumnZ};
-                        if (liquidAt(MC::getRegion(), blockPos)) {
-                            sawLiquid = true;
-                            continue;
-                        }
-                        if (sawLiquid) {
-                            const auto floor = world.getBlock(BlockPos{waterColumnX, y, waterColumnZ});
-                            if (floor.loaded && floor.solid) {
-                                waterBottomY = y + 1;
-                                waterBottomKnown = true;
-                            }
-                            break;
-                        }
-                    }
-                }
-                break;
-            }
-        }
-    }
-
-    // At the physical floor, jump past every unconsumed node belonging to the
-    // vertical column and immediately hand control to the first exit node.
-    // This deliberately does not depend on isOnGround(), which remains false
-    // while Bedrock considers the player's body submerged.
-    if (waterDescentActive) {
-        ++waterDescentTicks;
-        if (feet.y < lastWaterFeetY - 0.025f) {
-            waterHasDescended = true;
-            waterVerticalSettledTicks = 0;
-        } else if (waterHasDescended) {
-            ++waterVerticalSettledTicks;
-        }
-        lastWaterFeetY = feet.y;
-
-        const float columnDx = feet.x - (static_cast<float>(waterColumnX) + 0.5f);
-        const float columnDz = feet.z - (static_cast<float>(waterColumnZ) + 0.5f);
-        const bool insideColumn = columnDx * columnDx + columnDz * columnDz <= 1.20f * 1.20f;
-        const bool reachedScannedFloor = waterBottomKnown && insideColumn &&
-            feet.y <= static_cast<float>(waterBottomY) + 0.80f;
-        // Motion fallback: at the bottom, crouch remains requested but the
-        // player's Y stops decreasing. Requiring a real descent first and the
-        // lowest planned column level prevents this from firing at entry.
-        const bool settledAtPathBottom = insideColumn && waterHasDescended &&
-            waterDescentTicks >= 6 && waterVerticalSettledTicks >= 4 &&
-            feet.y <= static_cast<float>(waterPathBottomY) + 1.75f;
-        if (reachedScannedFloor || settledAtPathBottom) {
-            if (waterExitIndex > index && waterExitIndex <= path.size()) {
-                index = waterExitIndex;
-                lastProgressPosition = feet;
-                ticksWithoutProgress = 0;
-                ticksOutsidePath = 0;
-                resetParkourState();
-            }
-            waterDescentActive = false;
-            waterBottomKnown = false;
-            waterExitIndex = static_cast<std::size_t>(-1);
-            waterDescentTicks = 0;
-            waterVerticalSettledTicks = 0;
-            waterHasDescended = false;
-            if (index >= path.size()) {
-                clearInput(player);
-                restoreMiningHotbar(player);
-                return ExecutionStatus::Arrived;
-            }
-        }
-    }
     if (!progressInitialized) {
         lastProgressPosition = feet;
         progressInitialized = true;
@@ -488,11 +315,17 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         };
         for (const auto& candidate : clearanceCells) {
             const auto state = world.getBlock(candidate);
-            if (state.hazard || (!waterAllowed && state.liquid)) {
+            if (!state.loaded || state.hazard || (!waterAllowed && state.liquid)) {
                 foundUnsafe = true;
                 break;
             }
             if (state.solid) {
+                if (plannedBreakingOnly && (index == 0 ||
+                    !MovementGenerator::isPlannedBreakCell(path[index - 1].pos,
+                        path[index].pos, path[index].movement, candidate))) {
+                    foundUnsafe = true;
+                    break;
+                }
                 // Never let recovery clearance destroy a block that this same
                 // route expects to stand or jump on later. The controller also
                 // rejects planned conflicts; this is the last-moment guard for
@@ -507,7 +340,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 }
                 // Revalidate immediately before every destroy call. Flowing
                 // water may have reached a neighbor after A* built the route.
-                if (!waterAllowed && MovementGenerator::wouldExposeLiquid(world, candidate)) {
+                if (MovementGenerator::wouldExposeLiquid(world, candidate)) {
                     foundUnsafe = true;
                     break;
                 }
@@ -517,6 +350,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
 
         if (foundUnbreakable) {
+            if (obstructionBreakTicks > 0 && player->getGameMode() != nullptr)
+                player->getGameMode()->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
             clearInput(player);
             activeBreakIndex = static_cast<std::size_t>(-1);
             obstructionBreakTicks = 0;
@@ -529,6 +364,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
 
         if (foundUnsafe) {
+            if (obstructionBreakTicks > 0 && player->getGameMode() != nullptr)
+                player->getGameMode()->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
             clearInput(player);
             activeBreakIndex = static_cast<std::size_t>(-1);
             obstructionBreakTicks = 0;
@@ -544,6 +381,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             if (gameMode == nullptr)
                 return ExecutionStatus::NoPlayer;
             if (activeBreakIndex != index || activeBreakPos != *obstruction) {
+                if (obstructionBreakTicks > 0)
+                    gameMode->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
                 activeBreakIndex = index;
                 activeBreakPos = *obstruction;
                 obstructionBreakTicks = 0;
@@ -587,6 +426,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             return ExecutionStatus::Running;
         }
 
+        if (obstructionBreakTicks > 0 && player->getGameMode() != nullptr)
+            player->getGameMode()->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
         activeBreakIndex = static_cast<std::size_t>(-1);
         obstructionBreakTicks = 0;
         blockedTerrainTicks = 0;
@@ -683,54 +524,12 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         if (!reached && node.movement == MovementType::Swim) {
             const float dx = feet.x - (static_cast<float>(node.pos.x) + 0.5f);
             const float dz = feet.z - (static_cast<float>(node.pos.z) + 0.5f);
-            if (index > 0) {
-                const auto& previous = path[index - 1].pos;
-                const bool descendingColumnNode = node.pos.y < previous.y &&
-                    node.pos.x == previous.x && node.pos.z == previous.z;
-                // A downward swim node is complete once the physical player
-                // has crossed its Y plane. Requiring proximity to that exact
-                // Y makes already-passed nodes pull the player upward/around
-                // the column at the bottom. This loop can now consume every
-                // vertical node the player passed during a fast descent.
-                if (descendingColumnNode &&
-                    dx * dx + dz * dz <= 1.05f * 1.05f &&
-                    feet.y <= static_cast<float>(node.pos.y) + 1.10f)
-                    reached = true;
-            }
-            // At a stream exit Bedrock can keep the player half a block above
-            // or below the rounded feet cell. Consume only the active water
-            // node when tightly centered and vertically aligned.
-            if (!reached)
-                reached = dx * dx + dz * dz <= 0.62f * 0.62f &&
-                    std::abs(feet.y - static_cast<float>(node.pos.y)) <= 1.05f;
-            // Bedrock often leaves the liquid volume one tick before the
-            // planner's swim node is consumed.  When the player is grounded
-            // in the stream's exit corridor, accept that physical landing so
-            // the executor does not spin and replan at the bottom.
-            if (!reached && player->isOnGround() && MC::getRegion() != nullptr) {
-                const BedrockWorld world(MC::getRegion());
-                reached = hasSafeSupport(world, playerFeetBlock) &&
-                    dx * dx + dz * dz <= 0.90f * 0.90f &&
-                    std::abs(feet.y - static_cast<float>(node.pos.y)) <= 1.35f;
-            }
-            // A column's final swim node can be one block behind the actual
-            // standing cell because Bedrock keeps the body submerged during
-            // the exit tick.  If the next path node is ground movement and
-            // the player has real support, consume the swim tail instead of
-            // repeatedly steering back into the column.
-            if (!reached && index + 1 < path.size() &&
-                path[index + 1].movement != MovementType::Swim &&
-                MC::getRegion() != nullptr) {
-                const auto& exit = path[index + 1].pos;
-                const float ex = feet.x - (static_cast<float>(exit.x) + 0.5f);
-                const float ez = feet.z - (static_cast<float>(exit.z) + 0.5f);
-                const BedrockWorld world(MC::getRegion());
-                reached = hasSafeSupport(world, playerFeetBlock) &&
-                    ex * ex + ez * ez <= 1.05f * 1.05f &&
-                    std::abs(feet.y - static_cast<float>(exit.y)) <= 1.50f;
-            }
+            // Surface buoyancy lifts the feet above the integer route cell.
+            // Do not consume ascent nodes while still a full block below them.
+            reached = dx * dx + dz * dz <= 0.62f * 0.62f &&
+                feet.y >= static_cast<float>(node.pos.y) - 0.15f &&
+                feet.y <= static_cast<float>(node.pos.y) + 1.05f;
         }
-
         // A Bedrock fall can land past the destination block centre even after
         // forward input is released. Complete the fall from the supported
         // physical landing corridor so the next movement takes control; never
@@ -838,7 +637,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // Do not teleport progress to a merely nearby future segment. Give small
     // deviations a brief correction window, then let A* calculate a genuine
     // route from the player's real block if the corridor cannot be rejoined.
-    if (outsideActiveCorridor && !waterDescentActive) {
+    if (outsideActiveCorridor) {
         // Ordinary routes receive enough time to center from any point within
         // their starting block. Mining gets additional hysteresis because a
         // broken support or downward transition legitimately displaces it.
@@ -858,15 +657,20 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // Airborne ticks are active progress for falls and jumps. Counting them as
     // stagnation causes false recovery on two-block drops near the jump apex.
     const bool preparingBridge = index < path.size() && path[index].movement == MovementType::Bridge;
-    if (preparingBridge || waterDescentActive)
+    const bool waterRoute = path[index].movement == MovementType::Swim ||
+        (index > 0 && BedrockWorld(MC::getRegion()).getBlock(path[index - 1].pos).liquid);
+    if (preparingBridge)
         ticksWithoutProgress = 0;
-    if (!player->isOnGround()) {
+    if (!player->isOnGround() && !inWaterBlocks && !waterRoute) {
         lastProgressPosition = feet;
         ticksWithoutProgress = 0;
-    } else if (horizontalDistance(feet, lastProgressPosition) > 0.15f || std::abs(feet.y - lastProgressPosition.y) > 0.35f) {
+    } else if (bedrock_physics::madeWaterProgress(horizontalDistance(feet, lastProgressPosition),
+        feet.y - lastProgressPosition.y, index > 0 && path[index].pos.y > path[index - 1].pos.y &&
+            path[index].movement == MovementType::Swim) ||
+        (!inWaterBlocks && !waterRoute && std::abs(feet.y - lastProgressPosition.y) > 0.35f)) {
         lastProgressPosition = feet;
         ticksWithoutProgress = 0;
-    } else if (!preparingBridge && !waterDescentActive && ++ticksWithoutProgress > 80) {
+    } else if (!preparingBridge && ++ticksWithoutProgress > 80) {
         clearInput(player);
         return ExecutionStatus::Stuck;
     }
@@ -894,8 +698,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 // A low/early launch can bump the head and land back in the
                 // source voxel. Re-arm this same ascent after a brief
                 // centering window instead of throwing away the whole path.
-                if (player->isOnGround() && playerFeetBlock != node.pos &&
-                    (ascendWasAirborne || ascendLaunchTicks > 6)) {
+                if (bedrock_physics::shouldRetryAscent(player->isOnGround(), feet.y,
+                    static_cast<float>(node.pos.y), ascendWasAirborne, ascendLaunchTicks)) {
                     if (++ascendRetries > 3) {
                         clearInput(player);
                         return ExecutionStatus::Stuck;
@@ -916,6 +720,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         ascendRetries = 0;
         ascendRetryDelay = 0;
     }
+    if (isAscending && inWaterBlocks)
+        ascendJumpIssued = true; // swim into the bank; never retreat to a grounded takeoff point
 
     // A break can invalidate the support relationship that was true when the
     // path was planned. Never keep jumping from a missing/stale support block;
@@ -929,7 +735,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         const BedrockWorld world(MC::getRegion());
         const bool currentSupported = hasSafeSupport(world, playerFeetBlock);
         const bool destinationSupported = hasSafeSupport(world, node.pos);
-        if (!currentSupported || !destinationSupported) {
+        if (!currentSupported || (node.movement != MovementType::BuildAscend && !destinationSupported)) {
             clearInput(player);
             return ExecutionStatus::OffPath;
         }
@@ -942,7 +748,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     if (MC::getRegion() != nullptr) {
         const BedrockWorld world(MC::getRegion());
         bool clear = hasPlayerClearance(world, node.pos, waterAllowed);
-        if (clear && index > 0 && node.movement == MovementType::Diagonal) {
+        if (node.movement == MovementType::WaterDrop && index > 0 && player->isOnGround())
+            clear = clear && MovementGenerator::canDropToWater(world, path[index - 1].pos, node.pos);
+        if (clear && index > 0 && (node.movement == MovementType::Diagonal ||
+            node.movement == MovementType::Swim)) {
             const auto& source = path[index - 1].pos;
             const int dx = std::clamp(node.pos.x - source.x, -1, 1);
             const int dz = std::clamp(node.pos.z - source.z, -1, 1);
@@ -1212,7 +1021,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         ascendTakeoffReady = player->isOnGround() && playerFeetBlock == source &&
             lateral <= 0.24f && along >= 0.04f && predictedAlong >= 0.12f &&
             along <= 0.58f && ascendRetryDelay == 0 && buildReady && terrainReady;
-        if (!ascendJumpIssued && !ascendTakeoffReady) {
+        if (!inWaterBlocks && !ascendJumpIssued && !ascendTakeoffReady) {
             const glm::vec2 takeoffPoint = sourceCenter + axis * 0.18f;
             direction = takeoffPoint - glm::vec2{feet.x, feet.z};
             facingDirection = axis;
@@ -1321,70 +1130,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 predictedBrakeProgress >= 0.92f;
         }
     }
-    // Do not key this only off MovementType::Swim.  At the bottom of a water
-    // column the planner can legitimately label the exit as Traverse/Descend
-    // while the actor is still physically submerged.  The Bedrock liquid
-    // volume is the authoritative signal for crouched downward movement.
-    const bool approachingWaterColumn = waterDescentActive && !inWaterBlocks;
-    const bool verticalSwimDown = waterDescentActive && inWaterBlocks;
-    // Keep sneak held for the complete submerged stream segment.  The node
-    // may briefly be level (or already at the exit Y), but releasing crouch
-    // there makes Bedrock's current push the player out of the column.
-    const bool waterStreamSegment = verticalSwimDown;
     const float distance = glm::length(direction);
     if (distance > 0.001f)
         direction /= distance;
 
-    if (waterDescentActive) {
-        // Water currents can push the player sideways out of a one-block
-        // column. Keep the descent vertical while applying a strong, bounded
-        // horizontal correction back toward the stream center.
-        glm::vec2 centerDelta{
-            static_cast<float>(waterColumnX) + 0.5f - feet.x,
-            static_cast<float>(waterColumnZ) + 0.5f - feet.z};
-        const float offset = glm::length(centerDelta);
-        if (approachingWaterColumn && offset > 0.04f) {
-            const glm::vec2 correction = centerDelta / std::max(offset, 0.001f);
-            direction = correction * std::clamp(offset * 1.5f, 0.12f, 0.65f);
-            facingDirection = direction;
-        } else if (approachingWaterColumn) {
-            direction = {};
-        } else if (!approachingWaterColumn) {
-            // Bedrock water preserves horizontal momentum after input is
-            // released. Use a damped position controller: pull toward the
-            // column centre and simultaneously oppose measured sideways
-            // velocity. This actively arrests drift instead of waiting until
-            // the player has already left the rendered line.
-            const glm::vec2 horizontalVelocity{measuredMotion.x, measuredMotion.z};
-            // Treat observed horizontal motion as the combined momentum and
-            // stream push. A stronger derivative term counters the current
-            // without calling an unstable native liquid helper or modifying
-            // the player's velocity directly.
-            glm::vec2 correction = centerDelta * 6.0f - horizontalVelocity * 14.f;
-            const float correctionLength = glm::length(correction);
-            const float horizontalSpeed = glm::length(horizontalVelocity);
-            if (offset <= 0.018f && horizontalSpeed <= 0.005f) {
-                direction = {};
-            } else if (correctionLength > 0.001f) {
-                // Flowing water can overpower a fractional analog correction.
-                // Hold a full vanilla movement input toward the predicted
-                // centre until both lateral error and drift have settled.
-                direction = correction / correctionLength;
-            }
-        }
-        // Centering can alternate by a few hundredths around the column
-        // midpoint. Keep the view direction fixed during the descent so those
-        // strafe corrections never become 180-degree head turns.
-        if (!approachingWaterColumn) {
-            const float fixedYaw = waterFacingYaw * std::numbers::pi_v<float> / 180.f;
-            facingDirection = {-std::sin(fixedYaw), std::cos(fixedYaw)};
-        }
-    }
-
     // Keep ordinary movement on the exact block-center rail. The old
     // look-ahead tangent is retained below for reference but disabled because
     // it can move the collision box into an inside corner before centering.
-    if (false && !terrainBreakingAllowed && !waterDescentActive && ordinaryMovement &&
+    if (false && !terrainBreakingAllowed && ordinaryMovement &&
         !tightObstacleTurn &&
         index > 0 && index + 1 < path.size()) {
         const auto& source = path[index - 1].pos;
@@ -1433,11 +1186,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             ? std::clamp(distance / 1.00f, 0.50f, 0.75f)
             : std::clamp(distance / 1.15f, 0.82f, 1.f)))
         : 1.f;
-    const float waterApproachScale = approachingWaterColumn
-        ? std::clamp(glm::length(glm::vec2{
-              static_cast<float>(waterColumnX) + 0.5f - feet.x,
-              static_cast<float>(waterColumnZ) + 0.5f - feet.z}) * 1.15f, 0.f, 0.75f)
-        : 1.f;
+
     const float facingDistance = glm::length(facingDirection);
     if (facingDistance > 0.001f)
         facingDirection /= facingDistance;
@@ -1530,20 +1279,29 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         if (precisionSneak)
             cautiousScale = 0.82f;
     }
-    const float pathMovementScale = waterDescentActive
-        ? 1.f
-        : cautiousScale * humanApproachScale * ascendApproachScale;
+    const float pathMovementScale = cautiousScale * humanApproachScale * ascendApproachScale;
     const float forwardAmount = parkourAirBrake ? -0.24f :
         (parkourAirRelease ? 0.f : (parkourApproachBrake ? -0.16f :
         (parkourApproachRelease ? 0.f :
         (fallBraking ? -0.55f : (fallCoasting ? 0.f :
-            requestedForward * pathMovementScale * waterApproachScale)))));
+            requestedForward * pathMovementScale)))));
     // Keep lateral correction active while braking so an imperfect launch is
     // pulled back over the landing block instead of drifting beside it.
     const float leftAmount = std::clamp(-glm::dot(right, direction), -1.f, 1.f) *
         ((parkourAirRelease || parkourAirBrake) ?
             std::clamp(parkourLateralCorrection * 2.5f, 0.25f, 1.f) : 1.f);
-    const glm::vec2 localMovement{leftAmount, forwardAmount};
+    glm::vec2 localMovement{leftAmount, forwardAmount};
+    if (node.movement == MovementType::WaterDrop && !inWaterBlocks) {
+        // Regulate both world axes throughout the fall, including overshoot.
+        // Do not normalize this correction or keep a fixed forward tangent.
+        glm::vec2 correction{
+            bedrock_physics::waterDropAxisInput(target.x - feet.x, measuredMotion.x, player->isOnGround()),
+            bedrock_physics::waterDropAxisInput(target.z - feet.z, measuredMotion.z, player->isOnGround())};
+        const float magnitude = glm::length(correction);
+        if (magnitude > 1.f)
+            correction /= magnitude;
+        localMovement = {-glm::dot(right, correction), glm::dot(forward, correction)};
+    }
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
         if (!movementModeCaptured) {
@@ -1561,10 +1319,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         input->rawInputState.analogMoveVector = localMovement;
 
         constexpr float digitalThreshold = 0.35f;
-        input->inputState.up = forwardAmount > digitalThreshold;
-        input->inputState.down = forwardAmount < -digitalThreshold;
-        input->inputState.left = leftAmount > digitalThreshold;
-        input->inputState.right = leftAmount < -digitalThreshold;
+        input->inputState.up = localMovement.y > digitalThreshold;
+        input->inputState.down = localMovement.y < -digitalThreshold;
+        input->inputState.left = localMovement.x > digitalThreshold;
+        input->inputState.right = localMovement.x < -digitalThreshold;
         input->rawInputState.up = input->inputState.up;
         input->rawInputState.down = input->inputState.down;
         input->rawInputState.left = input->inputState.left;
@@ -1581,7 +1339,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         const float sprintThreshold = precisionSneak ? 0.45f : (isParkour ? 0.55f : 0.8f);
         const bool shouldSprint = options.sprint && forwardAmount > sprintThreshold &&
             (!isParkour || parkourNeedsSprint) && !parkourAirRelease &&
-            sprintSafe && !player->isInWater() && !waterDescentActive;
+            sprintSafe && !player->isInWater();
         input->inputState.sprintDown = shouldSprint;
         input->rawInputState.sprintDown = shouldSprint;
         input->sprinting = shouldSprint;
@@ -1591,10 +1349,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             input->inputState.sneakDown = true;
             input->rawInputState.sneakDown = true;
         }
-        if (waterStreamSegment) {
-            input->inputState.sneakInputCurrentlyDown = true;
-            input->rawInputState.sneakInputCurrentlyDown = true;
-        }
+
         // Let Bedrock's normal movement systems consume the inputs. Locking
         // this component and writing velocity directly causes server lagbacks.
         input->moveInputStateLocked = false;
@@ -1610,20 +1365,23 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     const bool shouldJump = (isAscending && !ascendJumpIssued && ascendTakeoffReady &&
         target.y > feet.y + 0.2f) ||
-        (node.movement == MovementType::WaterDrop && player->isOnGround()) || requestParkourJump;
-    const bool shouldSwimUp = node.movement == MovementType::Swim && target.y > feet.y + 0.15f;
-    const bool shouldSwimDown = verticalSwimDown ||
-        (node.movement == MovementType::Swim && target.y < feet.y - 0.05f);
+        requestParkourJump;
+    const bool shouldSwimUp = inWaterBlocks && (node.movement == MovementType::Swim || target.y >= feet.y - 0.15f);
+
     // Pulse jump while grounded instead of holding it throughout the flight.
     // This also prevents an immediate second jump on the landing tick.
-    const bool holdJump = (shouldJump && player->isOnGround()) || shouldSwimUp;
-    if (holdJump)
-        player->jumpFromGround();
-    if (holdJump && isAscending && player->isOnGround()) {
+    const bool groundedAtLaunch = player->isOnGround();
+    const bool holdJump = (shouldJump && groundedAtLaunch) || shouldSwimUp;
+    // Latch before the native call: jumpFromGround may clear onGround
+    // immediately. Missing this latch steers an airborne ascent backward
+    // toward its takeoff point instead of into the two-block-high landing.
+    if (holdJump && isAscending && groundedAtLaunch) {
         ascendJumpIssued = true;
         ascendWasAirborne = false;
         ascendLaunchTicks = 0;
     }
+    if (holdJump && groundedAtLaunch)
+        player->jumpFromGround();
     if (requestParkourJump) {
         parkourJumpIssued = true;
         parkourLaunchTicks = 0;
@@ -1637,14 +1395,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     }
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
-        // A vertical downward water-stream node intentionally crouches: this
-        // is the vanilla fast-descent behavior the player uses in bubbleless
-        // water columns. Ordinary submerged travel remains uncrouched.
-        const bool shouldSneak = isBridge || waterStreamSegment || precisionSneak;
+        // Keep swimming buoyant; precision ground steering must not cause a dive.
+        const bool shouldSneak = isBridge || (precisionSneak && !inWaterBlocks);
         input->sneaking = shouldSneak;
-        input->wantDown = shouldSwimDown;
+        input->wantDown = false;
         input->inputState.sneakDown = shouldSneak;
         input->rawInputState.sneakDown = shouldSneak;
+        input->inputState.sneakInputCurrentlyDown = shouldSneak;
+        input->rawInputState.sneakInputCurrentlyDown = shouldSneak;
     }
 
     controlledMovement = true;
@@ -1673,12 +1431,6 @@ void PathExecutor::stop(LocalPlayer* player) {
     bridgeNextStep = 1;
     bridgePlacementWait = 0;
     activeBridgeIndex = static_cast<std::size_t>(-1);
-    waterDescentActive = false;
-    waterBottomKnown = false;
-    waterExitIndex = static_cast<std::size_t>(-1);
-    waterDescentTicks = 0;
-    waterVerticalSettledTicks = 0;
-    waterHasDescended = false;
     bridgePitchActive = false;
     bridgePitch = 0.f;
     activeBreakIndex = static_cast<std::size_t>(-1);
@@ -1892,6 +1644,8 @@ void PathExecutor::clearInput(LocalPlayer* player) {
         input->rawInputState.jumpInputCurrentlyDown = false;
         input->inputState.sneakDown = false;
         input->rawInputState.sneakDown = false;
+        input->inputState.sneakInputCurrentlyDown = false;
+        input->rawInputState.sneakInputCurrentlyDown = false;
         input->sprinting = false;
         input->sneaking = false;
         input->persistSneak = false;

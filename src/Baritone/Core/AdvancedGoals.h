@@ -24,8 +24,8 @@ public:
     }
     [[nodiscard]] double heuristic(const BlockPos& pos) const override {
         const int dy = pos.y - target.y;
-        return (std::abs(pos.x - target.x) + std::abs(dy < 0 ? dy + 1 : dy) +
-            std::abs(pos.z - target.z)) * action_costs::sprintOneBlock;
+        return std::max(0, std::abs(pos.x - target.x) + std::abs(dy < 0 ? dy + 1 : dy) +
+            std::abs(pos.z - target.z) - 1) * action_costs::sprintOneBlock;
     }
     [[nodiscard]] std::string describe() const override { return "interact " + std::to_string(target.x) + " " + std::to_string(target.y) + " " + std::to_string(target.z); }
     [[nodiscard]] const BlockPos& getTarget() const { return target; }

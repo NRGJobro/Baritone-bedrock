@@ -28,6 +28,25 @@ constexpr float sprintJumpBoost = 0.20f;
 // support margin on a full source block.
 constexpr float safeTakeoffEdge = 0.5f + playerHalfWidth - sneakEdgeMargin;
 
+inline bool shouldRetryAscent(bool grounded, float feetY, float landingY,
+    bool wasAirborne, int launchTicks) {
+    // Contact with a low ceiling or the near edge of the landing is not a
+    // failed jump. Retry only after landing back below the intended step.
+    return grounded && feetY < landingY - 0.2f && (wasAirborne || launchTicks > 6);
+}
+
+inline float waterDropAxisInput(float error, float velocity, bool grounded) {
+    if (grounded)
+        return std::clamp(error * 0.5f - velocity * 4.f, -0.35f, 0.35f);
+    const float desiredVelocity = std::clamp(error * 0.35f, -0.12f, 0.12f);
+    return std::clamp((desiredVelocity - velocity * horizontalAirDrag) /
+        walkAirAcceleration, -1.f, 1.f);
+}
+
+inline bool madeWaterProgress(float horizontalDistance, float verticalRise, bool verticalSwim) {
+    return horizontalDistance > 0.15f || (verticalSwim && verticalRise > 0.35f);
+}
+
 inline float groundAcceleration(const bool sprinting, const bool sneaking) {
     if (sneaking)
         return sneakGroundAcceleration;

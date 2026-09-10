@@ -101,6 +101,9 @@ void BaritoneModule::onTick() {
         reply(*message);
     if (auto message = exploreProcess.takeMessage())
         reply(*message);
+    if (controller.getState() == baritone::ControllerState::Arrived &&
+        !miningProcess.isActive() && !exploreProcess.isActive())
+        setEnabled(false);
 }
 
 void BaritoneModule::onPostTick() {

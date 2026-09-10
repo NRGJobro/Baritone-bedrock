@@ -2,6 +2,7 @@
 
 #include "Bedrock/PathExecutor.h"
 #include "Core/Goal.h"
+#include "Core/NavigationPolicy.h"
 
 #include <unordered_set>
 
@@ -33,13 +34,13 @@ class BaritoneController {
     std::shared_ptr<Goal> goal{};
     Pathfinder pathfinder{};
     PathExecutor executor{};
-    bool executingPartialPath = false;
-    // The executor may walk a best-so-far path while the same A* search keeps
-    // expanding in the background.
-    bool executingPreviewPath = false;
+    PathOptions activeOptions{};
+    RouteStage routeStage = RouteStage::Walk;
+    ReplanGuard replanGuard{};
+    bool executingPreview = false;
+    BlockPos calculationStart{};
     bool replanWhenStuck = true;
     int stuckReplans = 0;
-    int supportConflictReplans = 0;
     // If a candidate mining route schedules a block for removal and later
     // needs that same block as footing, recalculate with that support treated
     // as non-breakable for the lifetime of this goal.
@@ -47,6 +48,7 @@ class BaritoneController {
 
     [[nodiscard]] BlockPos getPlayerBlock() const;
     void beginCalculation(const BlockPos& start);
+    bool tryFallback();
     void message(const std::string& text) const;
 
 public:

@@ -32,8 +32,8 @@ struct PathOptions {
     // cells contain non-hazardous liquid. Mining enables this so it may bridge
     // water without considering arbitrary scaffolding routes over dry gaps.
     bool bridgeOverWaterOnly = false;
-    // Mining/build processes temporarily enable terrain modification. Normal
-    // navigation leaves this disabled so a plain .goto never damages blocks.
+    // Mining enables this directly. The controller enables it for ordinary
+    // navigation only after a bounded search without terrain changes fails.
     bool allowBreak = false;
     // Mining uses a bounded local search and should not expand into the large
     // bridge fallback budget used by ordinary navigation.

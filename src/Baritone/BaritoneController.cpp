@@ -93,20 +93,6 @@ std::unordered_set<BlockPos, BlockPosHash> conflictingMiningSupports(
     return conflicts;
 }
 
-std::vector<PathNode> suffixFromPosition(const std::vector<PathNode>& path,
-    const BlockPos& position) {
-    const auto current = std::ranges::find(path, position, &PathNode::pos);
-    if (current == path.end())
-        return {};
-
-    std::vector<PathNode> suffix(current, path.end());
-    if (!suffix.empty()) {
-        suffix.front().movement = MovementType::Start;
-        suffix.front().costFromPrevious = 0.0;
-    }
-    return suffix;
-}
-
 } // namespace
 
 void BaritoneController::setGoal(std::shared_ptr<Goal> newGoal) {
@@ -120,14 +106,11 @@ bool BaritoneController::path() {
         return false;
 
     stuckReplans = 0;
-    supportConflictReplans = 0;
     protectedMiningSupports.clear();
     // Keep planning and execution on the same movement capability profile.
     options.preferSprint = executionOptions.sprint;
-    // Mining enables only the inexpensive water-bridge generator and needs it
-    // in the first bounded search. Ordinary navigation retains the broader
-    // bridge fallback after a construction-free attempt.
-    options.bridgeOnlyAfterFailure = options.allowBridge && !options.miningMode;
+    routeStage = RouteStage::Walk;
+    replanGuard = {};
     beginCalculation(getPlayerBlock());
     return true;
 }
@@ -138,11 +121,9 @@ bool BaritoneController::goTo(std::shared_ptr<Goal> newGoal) {
 }
 
 void BaritoneController::stop() {
+    executingPreview = false;
     pathfinder.cancel();
     executor.stop(MC::getLocalPlayer());
-    executingPartialPath = false;
-    executingPreviewPath = false;
-    supportConflictReplans = 0;
     protectedMiningSupports.clear();
     state = ControllerState::Idle;
 }
@@ -179,140 +160,69 @@ void BaritoneController::tick() {
         const ProtectedMiningWorld world(bedrockWorld, protectedMiningSupports);
         const auto search = pathfinder.step(world);
         if (search == SearchStatus::Searching) {
-            // The dark-blue route is already a valid path to A*'s current best
-            // frontier. Walk that snapshot now instead of idling until the
-            // entire bounded search finishes. The pathfinder remains active
-            // and its later common-prefix results extend the executor below.
-            const auto preview = suffixFromPosition(pathfinder.getBestPathSoFar(), getPlayerBlock());
+            auto preview = pathSuffix(pathfinder.getBestPathSoFar(), getPlayerBlock(), true);
             if (preview.size() > 1) {
-                if (options.miningMode) {
-                    const auto conflicts = conflictingMiningSupports(preview);
-                    bool addedProtection = false;
-                    for (const auto& support : conflicts)
-                        addedProtection |= protectedMiningSupports.insert(support).second;
-                    if (addedProtection) {
-                        if (++supportConflictReplans <= 3)
-                            beginCalculation(getPlayerBlock());
-                        else
-                            state = ControllerState::Failed;
-                        return;
-                    }
-                }
-                executor.begin(preview, options.allowBreak, options.allowWater,
-                    options.bridgeOverWaterOnly);
-                executingPreviewPath = true;
-                executingPartialPath = false;
+                executor.begin(std::move(preview), false, activeOptions.allowWater);
+                executingPreview = true;
                 state = ControllerState::Executing;
             }
             return;
         }
 
-        if (search == SearchStatus::Partial && options.allowBridge && options.bridgeOnlyAfterFailure &&
-            !options.miningMode) {
-            options.bridgeOnlyAfterFailure = false;
-            // Construction expands the frontier substantially; give the
-            // fallback search enough budget to reach the far platform instead
-            // of stopping at the same loaded-world partial edge.
-            options.maxExpandedNodes = std::max<std::size_t>(options.maxExpandedNodes, 200000);
-            message("Ordinary search reached a dead end; evaluating bridge routes.");
+        const auto path = pathSuffix(pathfinder.getPath(), getPlayerBlock());
+        if (search == SearchStatus::Partial && path.size() == 1 && getPlayerBlock() != calculationStart) {
+            // Reaching a temporary frontier is progress, not evidence that
+            // walking failed. Continue naturally instead of enabling building.
+            routeStage = RouteStage::Walk;
             beginCalculation(getPlayerBlock());
             return;
         }
-        if (options.miningMode &&
-            (search == SearchStatus::Found || search == SearchStatus::Partial) &&
-            pathfinder.getPath().size() > 1) {
-            const auto conflicts = conflictingMiningSupports(pathfinder.getPath());
-            bool addedProtection = false;
-            for (const auto& support : conflicts)
-                addedProtection |= protectedMiningSupports.insert(support).second;
-            if (addedProtection) {
-                // Re-run once with every conflicting step block preserved.
-                // The next search may still stand on these blocks, but it can
-                // no longer schedule them as tunnel clearance first.
-                if (++supportConflictReplans <= 3) {
+        if ((search == SearchStatus::Found || search == SearchStatus::Partial) && path.empty()) {
+            beginCalculation(getPlayerBlock());
+            return;
+        }
+        if (search == SearchStatus::Found || (search == SearchStatus::Partial && path.size() > 1)) {
+            if (activeOptions.allowBreak && path.size() > 1) {
+                const auto conflicts = conflictingMiningSupports(path);
+                bool addedProtection = false;
+                for (const auto& support : conflicts)
+                    addedProtection |= protectedMiningSupports.insert(support).second;
+                if (addedProtection) {
                     beginCalculation(getPlayerBlock());
-                } else {
-                    state = ControllerState::Failed;
+                    return;
                 }
+            }
+            if (path.size() == 1) {
+                state = ControllerState::Arrived;
+                message("Already at the goal.");
                 return;
             }
-        }
-        if ((search == SearchStatus::Found || search == SearchStatus::Partial) && pathfinder.getPath().size() > 1) {
-            executingPartialPath = search == SearchStatus::Partial;
-            executingPreviewPath = false;
-            executor.begin(pathfinder.getPath(), options.allowBreak, options.allowWater,
-                options.bridgeOverWaterOnly);
+            executor.begin(path, activeOptions.allowBreak, activeOptions.allowWater,
+                activeOptions.bridgeOverWaterOnly, !options.miningMode);
+            executingPreview = false;
             state = ControllerState::Executing;
-            message(executingPartialPath ? "Using a partial path to the loaded-world edge." : "Path found.");
-        } else if (search == SearchStatus::Found && pathfinder.getPath().size() == 1) {
-            state = ControllerState::Arrived;
-            message("Already at the goal.");
-        } else {
-            if (options.allowBridge && options.bridgeOnlyAfterFailure && !options.miningMode) {
-                options.bridgeOnlyAfterFailure = false;
-                options.maxExpandedNodes = std::max<std::size_t>(options.maxExpandedNodes, 200000);
-                message("No ordinary route; evaluating bridge routes.");
-                beginCalculation(getPlayerBlock());
-                return;
-            }
-            state = ControllerState::Failed;
-            // MiningProcess handles a blocked ore patch immediately and emits
-            // a more useful patch-specific status. Avoid flashing a generic
-            // failure immediately before its next focused tunnel search.
-            if (!options.miningMode)
-                message("No walkable path was found from the current position.");
+            return;
         }
+        if (tryFallback())
+            return;
+        state = ControllerState::Failed;
+        if (!options.miningMode)
+            message("No safe route found within the search limit. Navigation stopped.");
         return;
     }
 
     if (state != ControllerState::Executing)
         return;
 
-    if (executingPreviewPath) {
+    if (executingPreview) {
         const BedrockWorld bedrockWorld(region);
         const ProtectedMiningWorld world(bedrockWorld, protectedMiningSupports);
-        // Once movement has started, keep background planning below a small
-        // fixed slice so it cannot monopolize a render/game tick.
-        const auto backgroundBudget = std::min<std::size_t>(options.nodesPerTick, 64);
-        const auto search = pathfinder.step(world, backgroundBudget);
-
-        const auto& candidate = search == SearchStatus::Searching ?
-            pathfinder.getBestPathSoFar() : pathfinder.getPath();
-        if (candidate.size() > 1 && options.miningMode) {
-            const auto conflicts = conflictingMiningSupports(candidate);
-            bool addedProtection = false;
-            for (const auto& support : conflicts)
-                addedProtection |= protectedMiningSupports.insert(support).second;
-            if (addedProtection) {
-                if (++supportConflictReplans <= 3)
-                    beginCalculation(getPlayerBlock());
-                else {
-                    executor.stop(player);
-                    state = ControllerState::Failed;
-                }
-                return;
-            }
-        }
-
-        if (search == SearchStatus::Partial && options.allowBridge &&
-            options.bridgeOnlyAfterFailure && !options.miningMode) {
-            options.bridgeOnlyAfterFailure = false;
-            options.maxExpandedNodes = std::max<std::size_t>(options.maxExpandedNodes, 200000);
-            message("Ordinary search reached a dead end; evaluating bridge routes.");
-            beginCalculation(getPlayerBlock());
-            return;
-        }
-
-        if (search == SearchStatus::Searching) {
-            // Most weighted-A* frontier updates retain the route already being
-            // followed. Append those nodes in place so reaching the old blue
-            // endpoint does not introduce a stop or reset movement state.
-            (void)executor.extendIfPrefix(candidate);
-        } else if ((search == SearchStatus::Found || search == SearchStatus::Partial) &&
-            candidate.size() > 1 && executor.extendIfPrefix(candidate)) {
-            executingPreviewPath = false;
-            executingPartialPath = search == SearchStatus::Partial;
-            message(executingPartialPath ? "Using a partial path to the loaded-world edge." : "Path found.");
+        const auto search = pathfinder.step(world, 32);
+        const auto candidate = search == SearchStatus::Searching
+            ? pathfinder.getBestPathSoFar() : pathfinder.getPath();
+        if (!executor.getPath().empty()) {
+            const auto extension = pathSuffix(candidate, executor.getPath().front().pos, true);
+            (void)executor.extendIfPrefix(extension);
         }
     }
 
@@ -320,54 +230,34 @@ void BaritoneController::tick() {
     case ExecutionStatus::Running:
         break;
     case ExecutionStatus::Arrived:
-        if (executingPreviewPath) {
-            const auto playerBlock = getPlayerBlock();
-            const auto search = pathfinder.getStatus();
-            const auto candidate = search == SearchStatus::Searching ?
-                pathfinder.getBestPathSoFar() : pathfinder.getPath();
-            auto continuation = suffixFromPosition(candidate, playerBlock);
-            if (continuation.size() > 1) {
-                executor.begin(std::move(continuation), options.allowBreak, options.allowWater,
-                    options.bridgeOverWaterOnly);
-                if (search != SearchStatus::Searching) {
-                    executingPreviewPath = false;
-                    executingPartialPath = search == SearchStatus::Partial;
-                }
-            } else if (search == SearchStatus::Searching) {
-                // The frontier changed before this snapshot ended. Restart A*
-                // from the physical endpoint instead of steering backward to
-                // the old search origin.
-                beginCalculation(playerBlock);
-            } else if (goal && goal->isInGoal(playerBlock)) {
-                executingPreviewPath = false;
-                state = ControllerState::Arrived;
-                message("Goal reached.");
-            } else {
-                beginCalculation(playerBlock);
-            }
-        } else if (executingPartialPath && goal && !goal->isInGoal(getPlayerBlock())) {
-            beginCalculation(getPlayerBlock());
-        } else {
+        if (goal && goal->isInGoal(getPlayerBlock())) {
+            pathfinder.cancel();
             state = ControllerState::Arrived;
             message("Goal reached.");
-            
+        } else if (executingPreview) {
+            // Keep the same bounded search alive if the frontier diverged.
+            // The next tick adopts a suffix or waits for this search to finish;
+            // it does not restart A* every time a short preview ends.
+            executingPreview = false;
+            state = ControllerState::Calculating;
+        } else {
+            // Re-evaluate natural terrain first after each completed segment.
+            // A previous bridge/tunnel never enables construction permanently.
+            routeStage = RouteStage::Walk;
+            beginCalculation(getPlayerBlock());
         }
         break;
     case ExecutionStatus::Stuck:
+    case ExecutionStatus::OffPath:
         if (replanWhenStuck && ++stuckReplans <= 3) {
-            message("Movement stalled; recalculating.");
+            routeStage = RouteStage::Walk;
             beginCalculation(getPlayerBlock());
         } else {
             executor.stop(player);
+            pathfinder.cancel();
             state = ControllerState::Failed;
-            message("Stopped after three failed recovery attempts.");
+            message("Stopped after repeated movement failures.");
         }
-        break;
-    case ExecutionStatus::OffPath:
-        // Route invalidation is not a stall and should not consume one of the
-        // limited stall-recovery attempts. Rebuild from the physical position.
-        message("Left the path; finding a new route.");
-        beginCalculation(getPlayerBlock());
         break;
     case ExecutionStatus::NoPlayer:
         executor.stop(player);
@@ -377,7 +267,6 @@ void BaritoneController::tick() {
         break;
     }
 }
-
 void BaritoneController::postTick() {
     executor.applyVisualRotation(MC::getLocalPlayer());
 }
@@ -408,8 +297,6 @@ std::string BaritoneController::getStatusLine() const {
         result += " | nodes: " + std::to_string(pathfinder.getExpandedNodeCount());
     if (state == ControllerState::Executing)
         result += " | node: " + std::to_string(executor.getCurrentIndex()) + "/" + std::to_string(executor.getPath().size());
-    if (state == ControllerState::Executing && executingPreviewPath)
-        result += " | searching: " + std::to_string(pathfinder.getExpandedNodeCount()) + " nodes";
     return result;
 }
 
@@ -443,19 +330,37 @@ BlockPos BaritoneController::getPlayerBlock() const {
     const auto feet = player->getFeetPosition();
     return {
         static_cast<int>(std::floor(feet.x)),
-        static_cast<int>(std::round(feet.y)),
+        static_cast<int>(std::floor(feet.y + 0.1251f)),
         static_cast<int>(std::floor(feet.z))
     };
 }
 
 void BaritoneController::beginCalculation(const BlockPos& start) {
+    executingPreview = false;
     executor.stop(MC::getLocalPlayer());
-    pathfinder.begin(start, goal, options);
-    executingPartialPath = false;
-    executingPreviewPath = false;
+    if (!goal || !replanGuard.allow(start, goal->heuristic(start))) {
+        pathfinder.cancel();
+        state = ControllerState::Failed;
+        message("Stopped: repeated searches are not making progress.");
+        return;
+    }
+    activeOptions = routeOptions(options, routeStage);
+    calculationStart = start;
+    pathfinder.begin(start, goal, activeOptions);
     state = ControllerState::Calculating;
 }
 
+bool BaritoneController::tryFallback() {
+    if (routeStage == RouteStage::Walk && !options.miningMode) {
+        routeStage = RouteStage::Break;
+    } else if (routeStage != RouteStage::Build && options.allowBridge) {
+        routeStage = RouteStage::Build;
+    } else {
+        return false;
+    }
+    beginCalculation(getPlayerBlock());
+    return true;
+}
 void BaritoneController::message(const std::string& text) const {
     if (const auto gui = MC::getGuiData())
         gui->displayClientMessage("\xC2\xA7" "6[Limiter]" "\xC2\xA7" "r " + text);

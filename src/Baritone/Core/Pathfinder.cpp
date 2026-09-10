@@ -1,6 +1,7 @@
 #include "Pathfinder.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace baritone {
 namespace {
@@ -68,7 +69,7 @@ SearchStatus Pathfinder::step(const IWorld& world, std::size_t budget) {
         return status;
 
     if (budget == 0)
-        budget = options.nodesPerTick;
+        budget = std::max<std::size_t>(1, options.nodesPerTick);
 
     CachedWorld cachedWorld(world, worldCache);
     // Reuse one successor buffer for the complete tick slice. Previously each
@@ -77,7 +78,10 @@ SearchStatus Pathfinder::step(const IWorld& world, std::size_t budget) {
     movements.reserve(24);
 
     std::size_t processed = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
     while (!open.empty() && processed < budget) {
+        if (processed > 0 && std::chrono::steady_clock::now() >= deadline)
+            break;
         const auto entry = open.top();
         open.pop();
 
@@ -96,12 +100,12 @@ SearchStatus Pathfinder::step(const IWorld& world, std::size_t budget) {
         ++expanded;
 
         const double h = goal->heuristic(entry.pos);
-        // Java Baritone keeps several best-so-far candidates with weighted
-        // cost coefficients. This equivalent Bedrock selection balances goal
-        // progress against the actual Bedrock tick cost, preventing a cheap
-        // heuristic-only branch from winning partial-path recovery.
+        // A partial path must retain actual goal progress even for expensive
+        // swimming/mining moves. Adding cost to the heuristic as the primary
+        // criterion can leave 'best' at the start of a perfectly usable lake
+        // crossing. Use cost to choose between equally close frontier nodes.
         const double score = h + current.g / 2.0;
-        if (score < bestScore) {
+        if (h < bestHeuristic || (h == bestHeuristic && score < bestScore)) {
             bestScore = score;
             bestHeuristic = h;
             best = entry.pos;
