@@ -106,6 +106,7 @@ bool BaritoneController::path() {
         return false;
 
     stuckReplans = 0;
+    lastReplanReason.clear();
     protectedMiningSupports.clear();
     // Keep planning and execution on the same movement capability profile.
     options.preferSprint = executionOptions.sprint;
@@ -121,7 +122,10 @@ bool BaritoneController::goTo(std::shared_ptr<Goal> newGoal) {
 }
 
 void BaritoneController::stop() {
-    executingPreview = false;
+    pathNeedsContinuation = false;
+    planningAhead = false;
+    aheadRetryCooldown = 0;
+    nextPlanningIndex = 0;
     pathfinder.cancel();
     executor.stop(MC::getLocalPlayer());
     protectedMiningSupports.clear();
@@ -160,12 +164,8 @@ void BaritoneController::tick() {
         const ProtectedMiningWorld world(bedrockWorld, protectedMiningSupports);
         const auto search = pathfinder.step(world);
         if (search == SearchStatus::Searching) {
-            auto preview = pathSuffix(pathfinder.getBestPathSoFar(), getPlayerBlock(), true);
-            if (preview.size() > 1) {
-                executor.begin(std::move(preview), false, activeOptions.allowWater);
-                executingPreview = true;
-                state = ControllerState::Executing;
-            }
+            // Let bounded A* finish choosing this segment before committing it.
+            // Chaining early best-so-far prefixes locks in exploratory detours.
             return;
         }
 
@@ -199,7 +199,9 @@ void BaritoneController::tick() {
             }
             executor.begin(path, activeOptions.allowBreak, activeOptions.allowWater,
                 activeOptions.bridgeOverWaterOnly, !options.miningMode);
-            executingPreview = false;
+            pathNeedsContinuation = search == SearchStatus::Partial;
+            planningAhead = false;
+            aheadRetryCooldown = 0;
             state = ControllerState::Executing;
             return;
         }
@@ -214,15 +216,59 @@ void BaritoneController::tick() {
     if (state != ControllerState::Executing)
         return;
 
-    if (executingPreview) {
+    if (aheadRetryCooldown > 0)
+        --aheadRetryCooldown;
+
+    if (pathNeedsContinuation && !planningAhead && aheadRetryCooldown == 0 &&
+        goal && shouldPlanContinuation(executor.getCurrentIndex(),
+            executor.getPath().size(), nextPlanningIndex)) {
+        // The committed route never changes under the player. Every new search
+        // starts at its endpoint, including searches following early previews.
+        calculationStart = executor.getPath().back().pos;
+        pathfinder.begin(calculationStart, goal, activeOptions);
+        planningAhead = true;
+    }
+
+    if (planningAhead) {
         const BedrockWorld bedrockWorld(region);
         const ProtectedMiningWorld world(bedrockWorld, protectedMiningSupports);
-        const auto search = pathfinder.step(world, 32);
-        const auto candidate = search == SearchStatus::Searching
-            ? pathfinder.getBestPathSoFar() : pathfinder.getPath();
-        if (!executor.getPath().empty()) {
-            const auto extension = pathSuffix(candidate, executor.getPath().front().pos, true);
-            (void)executor.extendIfPrefix(extension);
+        const auto search = pathfinder.step(world);
+        const bool searching = search == SearchStatus::Searching;
+        const auto& continuation = pathfinder.getPath();
+        const bool ready = (search == SearchStatus::Found || search == SearchStatus::Partial) &&
+            continuation.size() > 1;
+
+        if (ready) {
+            auto joined = executor.getPath();
+            if (appendPathContinuation(joined, continuation)) {
+                bool retryWithProtection = false;
+                if (activeOptions.allowBreak) {
+                    for (const auto& support : conflictingMiningSupports(joined))
+                        retryWithProtection |= protectedMiningSupports.insert(support).second;
+                }
+                if (retryWithProtection) {
+                    pathfinder.begin(calculationStart, goal, activeOptions);
+                } else if (executor.extendIfPrefix(joined)) {
+                    // Only one segment ahead. Even a short continuation must
+                    // not trigger another search until we enter that segment.
+                    nextPlanningIndex = joined.size() - continuation.size();
+                    executor.updateCapabilities(activeOptions.allowBreak,
+                        activeOptions.allowWater, activeOptions.bridgeOverWaterOnly,
+                        !options.miningMode);
+                    // Calculation rests while the prepared segment is followed.
+                    pathfinder.cancel();
+                    planningAhead = false;
+                    pathNeedsContinuation = !goal->isInGoal(joined.back().pos);
+                    aheadRetryCooldown = 0;
+                }
+            } else {
+                pathfinder.cancel();
+                planningAhead = false;
+                aheadRetryCooldown = 5;
+            }
+        } else if (!searching) {
+            planningAhead = false;
+            aheadRetryCooldown = 5;
         }
     }
 
@@ -232,14 +278,14 @@ void BaritoneController::tick() {
     case ExecutionStatus::Arrived:
         if (goal && goal->isInGoal(getPlayerBlock())) {
             pathfinder.cancel();
+            pathNeedsContinuation = false;
+            planningAhead = false;
             state = ControllerState::Arrived;
             message("Goal reached.");
-        } else if (executingPreview) {
-            // Keep the same bounded search alive if the frontier diverged.
-            // The next tick adopts a suffix or waits for this search to finish;
-            // it does not restart A* every time a short preview ends.
-            executingPreview = false;
-            state = ControllerState::Calculating;
+        } else if (planningAhead) {
+            // Executor has released movement at the validated endpoint. Keep
+            // the in-flight search and append its result when ready.
+            state = ControllerState::Executing;
         } else {
             // Re-evaluate natural terrain first after each completed segment.
             // A previous bridge/tunnel never enables construction permanently.
@@ -249,6 +295,8 @@ void BaritoneController::tick() {
         break;
     case ExecutionStatus::Stuck:
     case ExecutionStatus::OffPath:
+        lastReplanReason = executor.getLastFailureReason();
+        lastReplanReason += player->isOnGround() ? " (ground)" : " (air)";
         if (replanWhenStuck && ++stuckReplans <= 3) {
             routeStage = RouteStage::Walk;
             beginCalculation(getPlayerBlock());
@@ -290,11 +338,13 @@ void BaritoneController::render(const std::vector<BlockPos>& miningTargets,
 ControllerState BaritoneController::getState() const { return state; }
 
 std::string BaritoneController::getStatusLine() const {
-    std::string result = stateName(state);
+    std::string result = stateName(state) + " [air-2]";
     if (goal)
         result += " | goal: " + goal->describe();
     if (state == ControllerState::Calculating)
         result += " | nodes: " + std::to_string(pathfinder.getExpandedNodeCount());
+    if (state == ControllerState::Calculating && !lastReplanReason.empty())
+        result += " | recovery: " + lastReplanReason;
     if (state == ControllerState::Executing)
         result += " | node: " + std::to_string(executor.getCurrentIndex()) + "/" + std::to_string(executor.getPath().size());
     return result;
@@ -336,7 +386,10 @@ BlockPos BaritoneController::getPlayerBlock() const {
 }
 
 void BaritoneController::beginCalculation(const BlockPos& start) {
-    executingPreview = false;
+    pathNeedsContinuation = false;
+    planningAhead = false;
+    aheadRetryCooldown = 0;
+    nextPlanningIndex = 0;
     executor.stop(MC::getLocalPlayer());
     if (!goal || !replanGuard.allow(start, goal->heuristic(start))) {
         pathfinder.cancel();
@@ -361,6 +414,7 @@ bool BaritoneController::tryFallback() {
     beginCalculation(getPlayerBlock());
     return true;
 }
+
 void BaritoneController::message(const std::string& text) const {
     if (const auto gui = MC::getGuiData())
         gui->displayClientMessage("\xC2\xA7" "6[Limiter]" "\xC2\xA7" "r " + text);

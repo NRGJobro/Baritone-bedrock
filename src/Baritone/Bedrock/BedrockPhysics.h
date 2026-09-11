@@ -28,6 +28,14 @@ constexpr float sprintJumpBoost = 0.20f;
 // support margin on a full source block.
 constexpr float safeTakeoffEdge = 0.5f + playerHalfWidth - sneakEdgeMargin;
 
+inline bool parkourSprintReady(int distance, bool ascending, bool sprintEnabled,
+    int sprintTicks, float measuredSpeed) {
+    if (distance < 3 && !ascending)
+        return true;
+    const float minimumSpeed = distance >= 4 ? 0.20f : 0.17f;
+    return sprintEnabled && sprintTicks >= 2 && measuredSpeed >= minimumSpeed;
+}
+
 inline bool shouldRetryAscent(bool grounded, float feetY, float landingY,
     bool wasAirborne, int launchTicks) {
     // Contact with a low ceiling or the near edge of the landing is not a

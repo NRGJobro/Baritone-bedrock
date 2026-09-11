@@ -34,7 +34,7 @@ class PathExecutor {
     std::size_t activeParkourIndex = static_cast<std::size_t>(-1);
     bool parkourJumpIssued = false;
     bool parkourWasAirborne = false;
-    bool parkourSprintPrimed = false;
+    bool parkourRepositioning = false;
     int parkourSprintTicks = 0;
     int parkourLaunchTicks = 0;
     std::size_t activeAscendIndex = static_cast<std::size_t>(-1);
@@ -78,6 +78,7 @@ class PathExecutor {
     int blockedTerrainTicks = 0;
     bool waterAllowed = true;
     bool bridgeOverWaterOnly = false;
+    std::string lastFailureReason;
 
     void clearInput(LocalPlayer* player);
     void resetParkourState();
@@ -91,6 +92,8 @@ public:
     // Adopt a longer planner result without resetting movement state. This is
     // used while A* continues beyond the temporary path already being walked.
     [[nodiscard]] bool extendIfPrefix(const std::vector<PathNode>& candidate);
+    void updateCapabilities(bool allowTerrainBreaking, bool allowWater,
+        bool waterOnlyBridge, bool plannedBreakingOnly);
     ExecutionStatus tick(LocalPlayer* player, const ExecutionOptions& options);
     void applyVisualRotation(LocalPlayer* player);
     void beginVisualRotationRender(LocalPlayer* player);
@@ -101,6 +104,7 @@ public:
     [[nodiscard]] std::size_t getCurrentIndex() const;
     [[nodiscard]] const std::vector<PathNode>& getPath() const;
     [[nodiscard]] double getEstimatedTicksRemaining() const;
+    [[nodiscard]] const std::string& getLastFailureReason() const { return lastFailureReason; }
 };
 
 } // namespace baritone

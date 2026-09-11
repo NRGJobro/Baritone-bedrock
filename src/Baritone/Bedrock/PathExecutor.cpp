@@ -1,4 +1,5 @@
 #include "PathExecutor.h"
+#include "../Core/NavigationPolicy.h"
 
 #include "BedrockPhysics.h"
 #include "BedrockWorld.h"
@@ -125,6 +126,15 @@ bool PathExecutor::extendIfPrefix(const std::vector<PathNode>& candidate) {
     return true;
 }
 
+void PathExecutor::updateCapabilities(const bool allowTerrainBreaking,
+    const bool allowWater, const bool waterOnlyBridge,
+    const bool onlyPlannedBreaks) {
+    terrainBreakingAllowed = allowTerrainBreaking;
+    plannedBreakingOnly = onlyPlannedBreaks;
+    waterAllowed = allowWater;
+    bridgeOverWaterOnly = waterOnlyBridge;
+}
+
 ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& options) {
     if (player == nullptr)
         return ExecutionStatus::NoPlayer;
@@ -225,7 +235,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // the real swept 1x2 clearance on every transition instead of trusting the
     // movement label chosen during planning: falling blocks, world updates, or
     // a tight diagonal can otherwise turn an ordinary node into an obstruction.
-    if (terrainBreakingAllowed && index < path.size() && MC::getRegion() != nullptr) {
+    if (terrainBreakingAllowed && player->isOnGround() &&
+        index < path.size() && MC::getRegion() != nullptr) {
         const BedrockWorld world(MC::getRegion());
         std::vector<BlockPos> clearanceCells;
         clearanceCells.reserve(8);
@@ -358,8 +369,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             // Do not throw away the route on the first transient/stale block
             // classification after a break. If the obstruction is genuinely
             // permanent, the bounded stall path performs one normal recovery.
-            if (++blockedTerrainTicks > 80)
+            if (++blockedTerrainTicks > 80) {
+                lastFailureReason = "unbreakable obstruction";
                 return ExecutionStatus::Stuck;
+            }
             return ExecutionStatus::Running;
         }
 
@@ -372,6 +385,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             // The world changed underneath the route. Never walk or mine into
             // a hazardous block; let the controller replan with the current
             // hazard map instead.
+            lastFailureReason = "unsafe obstruction";
             return ExecutionStatus::OffPath;
         }
 
@@ -421,6 +435,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             ticksOutsidePath = 0;
             if (obstructionBreakTicks > 240) {
                 gameMode->stopDestroyBlock(target);
+                lastFailureReason = "breaking timed out";
                 return ExecutionStatus::Stuck;
             }
             return ExecutionStatus::Running;
@@ -433,6 +448,30 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         blockedTerrainTicks = 0;
         if (miningRecoveryTicks > 0)
             --miningRecoveryTicks;
+    }
+
+    // A jump can land one walking node past its target. Resolve that exact,
+    // supported landing before corridor checks and the missed-jump detector.
+    // Otherwise a successful landing is classified as Stuck on this tick.
+    if (player->isOnGround() && MC::getRegion() != nullptr &&
+        ((activeParkourIndex == index && parkourJumpIssued && parkourWasAirborne) ||
+            (activeAscendIndex == index && ascendJumpIssued && ascendWasAirborne))) {
+        const BedrockWorld world(MC::getRegion());
+        const auto landed = jumpLandingIndex(path, index, playerFeetBlock, world);
+        if (landed < path.size()) {
+            index = landed;
+            ticksWithoutProgress = 0;
+            ticksOutsidePath = 0;
+            lastProgressPosition = feet;
+            resetParkourState();
+        } else if (repairJumpLanding(path, index, playerFeetBlock, world)) {
+            // Keep the remaining route and steer over this verified walking
+            // edge now, rather than returning Stuck and restarting A*.
+            ticksWithoutProgress = 0;
+            ticksOutsidePath = 0;
+            lastProgressPosition = feet;
+            resetParkourState();
+        }
     }
 
     // Terrain removal can drop or nudge the actor onto a later route block in
@@ -648,6 +687,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // recovery genuinely stalls. Ordinary navigation stays strict.
         if (!terrainBreakingAllowed && ticksOutsidePath > 16) {
             clearInput(player);
+            lastFailureReason = "outside movement corridor";
             return ExecutionStatus::OffPath;
         }
     } else {
@@ -672,6 +712,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         ticksWithoutProgress = 0;
     } else if (!preparingBridge && ++ticksWithoutProgress > 80) {
         clearInput(player);
+        lastFailureReason = "no movement progress";
         return ExecutionStatus::Stuck;
     }
 
@@ -702,6 +743,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                     static_cast<float>(node.pos.y), ascendWasAirborne, ascendLaunchTicks)) {
                     if (++ascendRetries > 3) {
                         clearInput(player);
+                        lastFailureReason = "ascent retries exhausted";
                         return ExecutionStatus::Stuck;
                     }
                     ascendJumpIssued = false;
@@ -737,6 +779,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         const bool destinationSupported = hasSafeSupport(world, node.pos);
         if (!currentSupported || (node.movement != MovementType::BuildAscend && !destinationSupported)) {
             clearInput(player);
+            lastFailureReason = "missing ascent support";
             return ExecutionStatus::OffPath;
         }
     }
@@ -750,7 +793,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         bool clear = hasPlayerClearance(world, node.pos, waterAllowed);
         if (node.movement == MovementType::WaterDrop && index > 0 && player->isOnGround())
             clear = clear && MovementGenerator::canDropToWater(world, path[index - 1].pos, node.pos);
-        if (clear && index > 0 && (node.movement == MovementType::Diagonal ||
+        if (clear && player->isOnGround() && index > 0 && (node.movement == MovementType::Diagonal ||
             node.movement == MovementType::Swim)) {
             const auto& source = path[index - 1].pos;
             const int dx = std::clamp(node.pos.x - source.x, -1, 1);
@@ -758,14 +801,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             clear = hasPlayerClearance(world, source.offset(dx, 0, 0), waterAllowed) &&
                 hasPlayerClearance(world, source.offset(0, 0, dz), waterAllowed);
         }
-        if (clear && index > 0 &&
+        if (clear && player->isOnGround() && index > 0 &&
             (node.movement == MovementType::Ascend || node.movement == MovementType::BreakAscend ||
                 node.movement == MovementType::BuildAscend)) {
             // A one-block jump sweeps the player's head through the cell above
             // the source before the feet arrive at the raised destination.
             clear = hasPlayerClearance(world, path[index - 1].pos.offset(0, 1, 0), waterAllowed);
         }
-        if (clear && index > 0 &&
+        if (clear && player->isOnGround() && index > 0 &&
             (node.movement == MovementType::Descend || node.movement == MovementType::BreakDescend ||
                 node.movement == MovementType::Fall || node.movement == MovementType::WaterDrop)) {
             const auto& source = path[index - 1].pos;
@@ -775,6 +818,11 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
         if (!clear) {
             clearInput(player);
+            // A changed landing must not start A* from an unsupported mid-air
+            // position. Release unsafe input but retain the route until the
+            // actor is grounded, when clearance/recovery can be evaluated.
+            if (!player->isOnGround())
+                return ExecutionStatus::Running;
             // Mining already inspected every breakable swept cell above. A
             // one-tick world update, exposed liquid/hazard, or stale chunk
             // state must not cause an immediate OffPath/replan after every
@@ -782,6 +830,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             // detector decide whether a real recovery is necessary.
             if (terrainBreakingAllowed)
                 return ExecutionStatus::Running;
+            lastFailureReason = "blocked movement clearance";
             return ExecutionStatus::OffPath;
         }
     }
@@ -857,6 +906,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 if (!placementState.loaded || placementState.hazard ||
                     (!placementState.solid && !placementState.liquid)) {
                     clearInput(player);
+                    lastFailureReason = "unsafe bridge support";
                     return ExecutionStatus::OffPath;
                 }
             }
@@ -962,11 +1012,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     float activeEdgeProgress = 0.f;
     if (index > 0)
         activeEdgeProgress = projectOntoSegment(feet, path[index - 1].pos, node.pos).progress;
-    // Safe-walk only for the final portion of a genuinely one-wide corner.
-    // The approach and all narrow straightaways remain uncrouched.
-    const bool precisionSneak = narrowFooting && ordinaryMovement && upcomingTurn &&
-        !upcomingVerticalOrParkour && activeEdgeProgress >= 0.58f &&
-        player->isOnGround();
+    // A validated endpoint may be on a treetop or ledge. If no extension
+    // exists yet, use safe-walk on the final approach to reduce overshoot.
+    const bool endpointApproach = index + 1 == path.size() && ordinaryMovement &&
+        activeEdgeProgress >= 0.58f && player->isOnGround();
+    const bool precisionSneak = endpointApproach ||
+        (narrowFooting && ordinaryMovement && upcomingTurn &&
+            !upcomingVerticalOrParkour && activeEdgeProgress >= 0.58f &&
+            player->isOnGround());
     if (isParkour) {
         if (activeParkourIndex != index) {
             resetParkourState();
@@ -979,10 +1032,12 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // and let the controller replan instead of walking off another edge.
         if (parkourJumpIssued && parkourWasAirborne && player->isOnGround()) {
             clearInput(player);
+            lastFailureReason = "jump landed outside target";
             return ExecutionStatus::Stuck;
         }
         if (parkourJumpIssued && !parkourWasAirborne && ++parkourLaunchTicks > 10) {
             clearInput(player);
+            lastFailureReason = "jump failed to launch";
             return ExecutionStatus::Stuck;
         }
     } else {
@@ -1071,13 +1126,32 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             // the source block and aimed down the actual parkour segment.
             parkourReady = player->isOnGround() && lateral <= 0.45f &&
                 parkourAlong >= -0.65f && parkourAlong <= bedrock_physics::safeTakeoffEdge;
-            if (parkourReady || parkourJumpIssued) {
+            const bool needsRunway = parkourDistance >= 3 || parkourAscend;
+            const bool speedReady = bedrock_physics::parkourSprintReady(
+                parkourDistance, parkourAscend, options.sprint,
+                parkourSprintTicks, parkourAlongSpeed);
+            if (!parkourJumpIssued && player->isOnGround() && needsRunway &&
+                !speedReady && parkourAlong >= 0.25f)
+                parkourRepositioning = true;
+            if (parkourRepositioning) {
+                // Reset on the supported source block before another run-up.
+                // No blind reverse movement over the block behind the source.
+                const glm::vec2 runwayStart = sourceCenter - jumpDirection * 0.20f;
+                direction = runwayStart - glm::vec2{feet.x, feet.z};
+                if (parkourAlong <= -0.10f && lateral <= 0.18f &&
+                    std::abs(parkourAlongSpeed) < 0.08f) {
+                    parkourRepositioning = false;
+                    parkourSprintTicks = 0;
+                }
+                parkourReady = false;
+            }
+            if (!parkourRepositioning && (parkourReady || parkourJumpIssued)) {
                 // Baritone keeps moving toward the destination throughout the
                 // jump. Preserve the route tangent while correcting lateral
                 // drift, rather than locking air input to a blind straight W.
                 direction = jumpDirection - lateralOffset * (player->isOnGround() ? 0.65f : 1.10f);
                 parkourLateralCorrection = lateral;
-            } else {
+            } else if (!parkourRepositioning) {
                 // PREPPING phase: return to the takeoff corridor before any
                 // sprint or jump input is allowed.
                 direction = sourceCenter - glm::vec2{feet.x, feet.z};
@@ -1224,7 +1298,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const glm::vec2 right{-forward.y, forward.x};
     const float parkourLength = static_cast<float>(std::max(parkourDistance, 1));
     const float requestedForward = std::clamp(glm::dot(forward, direction), -1.f, 1.f);
-    const bool parkourNeedsSprint = isParkour && (parkourDistance >= 4 || parkourAscend);
+    const bool parkourNeedsSprint = isParkour && (parkourDistance >= 3 || parkourAscend);
 
     // Decide before crossing the takeoff point. At full Bedrock sprint speed a
     // player travels about 0.28 blocks per tick, so waiting until the centre is
@@ -1239,9 +1313,9 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // less robotic than separate hard-coded slow/fast movement states.
     const float takeoffDistance = baseTakeoffDistance -
         std::clamp((measuredApproachSpeed - 0.18f) * 0.75f, 0.f, 0.075f);
-    const float minimumLaunchSpeed = parkourDistance >= 4 ? 0.20f : (parkourAscend ? 0.17f : 0.f);
-    const bool sprintReady = !parkourNeedsSprint || parkourSprintPrimed ||
-        measuredApproachSpeed >= minimumLaunchSpeed || nextApproachSpeed >= minimumLaunchSpeed;
+    const bool sprintReady = bedrock_physics::parkourSprintReady(
+        parkourDistance, parkourAscend, options.sprint,
+        parkourSprintTicks, measuredApproachSpeed);
     const bool requestParkourJump = isParkour && parkourReady && !parkourJumpIssued && sprintReady &&
         nextParkourAlong >= takeoffDistance && requestedForward > 0.92f;
     // If sprint has not become valid before the final safe part of the source,
@@ -1274,7 +1348,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const bool parkourAirBrake = parkourAirRelease &&
         predictedLandingCoasting >= parkourLength + 0.25f;
 
-    float cautiousScale = 1.f;
+    float cautiousScale = parkourRepositioning ? 0.35f : 1.f;
     if (!isParkour) {
         if (precisionSneak)
             cautiousScale = 0.82f;
@@ -1337,7 +1411,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             (ordinaryMovement && !upcomingVerticalOrParkour && (!narrowFooting || precisionSneak) &&
                 !tightObstacleTurn && (!terrainBreakingAllowed || !upcomingTurn));
         const float sprintThreshold = precisionSneak ? 0.45f : (isParkour ? 0.55f : 0.8f);
-        const bool shouldSprint = options.sprint && forwardAmount > sprintThreshold &&
+        const bool shouldSprint = options.sprint && !parkourRepositioning &&
+            forwardAmount > sprintThreshold &&
             (!isParkour || parkourNeedsSprint) && !parkourAirRelease &&
             sprintSafe && !player->isInWater();
         input->inputState.sprintDown = shouldSprint;
@@ -1356,10 +1431,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
         if (isParkour && parkourReady && parkourNeedsSprint && shouldSprint) {
             ++parkourSprintTicks;
-            // Require a short native sprint runway, but accept measured speed
-            // immediately when the player entered this edge with momentum.
-            parkourSprintPrimed = parkourSprintTicks >= 2 ||
-                measuredApproachSpeed >= minimumLaunchSpeed;
+        } else if (!parkourJumpIssued) {
+            parkourSprintTicks = 0;
         }
     }
 
@@ -1396,7 +1469,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
         // Keep swimming buoyant; precision ground steering must not cause a dive.
-        const bool shouldSneak = isBridge || (precisionSneak && !inWaterBlocks);
+        const bool shouldSneak = isBridge ||
+            ((precisionSneak || parkourRepositioning) && !inWaterBlocks);
         input->sneaking = shouldSneak;
         input->wantDown = false;
         input->inputState.sneakDown = shouldSneak;
@@ -1662,7 +1736,7 @@ void PathExecutor::resetParkourState() {
     activeParkourIndex = static_cast<std::size_t>(-1);
     parkourJumpIssued = false;
     parkourWasAirborne = false;
-    parkourSprintPrimed = false;
+    parkourRepositioning = false;
     parkourSprintTicks = 0;
     parkourLaunchTicks = 0;
 }

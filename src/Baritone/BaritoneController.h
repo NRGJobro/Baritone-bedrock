@@ -37,10 +37,17 @@ class BaritoneController {
     PathOptions activeOptions{};
     RouteStage routeStage = RouteStage::Walk;
     ReplanGuard replanGuard{};
-    bool executingPreview = false;
+    // Partial A* results are executable route segments. Plan the following
+    // segment while the current one is still moving so their boundary does
+    // not introduce a stop-and-replan pause.
+    bool pathNeedsContinuation = false;
+    bool planningAhead = false;
+    int aheadRetryCooldown = 0;
+    std::size_t nextPlanningIndex = 0;
     BlockPos calculationStart{};
     bool replanWhenStuck = true;
     int stuckReplans = 0;
+    std::string lastReplanReason;
     // If a candidate mining route schedules a block for removal and later
     // needs that same block as footing, recalculate with that support treated
     // as non-breakable for the lifetime of this goal.

@@ -11,6 +11,81 @@ namespace baritone {
 
 enum class RouteStage { Walk, Break, Build };
 
+// Recognize a jump landing on the planned destination or its next two walking
+// nodes. Exact block matches only; never skip another jump, drop or build.
+inline std::size_t jumpLandingIndex(const std::vector<PathNode>& path,
+    std::size_t index, const BlockPos& feet, const IWorld& world) {
+    if (index >= path.size())
+        return path.size();
+    const auto movement = path[index].movement;
+    if (movement != MovementType::Parkour && movement != MovementType::Ascend)
+        return path.size();
+    PathOptions landingOptions;
+    landingOptions.allowWater = false;
+    const auto end = std::min(path.size(), index + 3);
+    for (std::size_t cursor = index; cursor < end; ++cursor) {
+        if (cursor > index &&
+            ((path[cursor].movement != MovementType::Traverse &&
+                path[cursor].movement != MovementType::Diagonal) ||
+                path[cursor].pos.y != path[index].pos.y))
+            break;
+        if (!MovementGenerator::canStandAt(world, path[cursor].pos, landingOptions))
+            break;
+        if (path[cursor].pos == feet)
+            return cursor;
+    }
+    return path.size();
+}
+
+inline bool shouldPlanContinuation(std::size_t index, std::size_t pathSize,
+    std::size_t nextPlanningIndex) {
+    return pathSize > 0 && index >= nextPlanningIndex &&
+        (index >= pathSize || pathSize - index <= 24);
+}
+
+// A supported landing beside the intended jump destination can finish with
+// one ordinary walking edge. Validate that edge with the planner's collision
+// rules instead of throwing away the rest of the route.
+inline bool repairJumpLanding(std::vector<PathNode>& path, std::size_t index,
+    const BlockPos& feet, const IWorld& world) {
+    if (index == 0 || index >= path.size() ||
+        (path[index].movement != MovementType::Parkour &&
+            path[index].movement != MovementType::Ascend) ||
+        feet == path[index - 1].pos || feet == path[index].pos ||
+        feet.y != path[index].pos.y)
+        return false;
+    PathOptions options;
+    options.allowWater = false;
+    options.allowAscend = false;
+    options.allowFall = false;
+    options.allowParkour = false;
+    if (!MovementGenerator::canStandAt(world, feet, options))
+        return false;
+    const auto moves = MovementGenerator::getMovements(world, feet, options);
+    for (const auto& move : moves) {
+        if (move.destination == path[index].pos &&
+            (move.type == MovementType::Traverse || move.type == MovementType::Diagonal)) {
+            path[index - 1].pos = feet;
+            path[index].movement = move.type;
+            path[index].costFromPrevious = move.cost;
+            return true;
+        }
+    }
+    return false;
+}
+
+// A separate search must join exactly at the committed endpoint. Preserve
+// its incoming movement and cost; the new search's Start node is not an edge.
+inline bool appendPathContinuation(std::vector<PathNode>& path,
+    const std::vector<PathNode>& continuation) {
+    if (path.empty() || continuation.size() < 2 ||
+        path.back().pos != continuation.front().pos ||
+        continuation.front().movement != MovementType::Start)
+        return false;
+    path.insert(path.end(), continuation.begin() + 1, continuation.end());
+    return true;
+}
+
 inline std::vector<PathNode> pathSuffix(const std::vector<PathNode>& path, const BlockPos& position,
     bool naturalOnly = false) {
     auto begin = std::ranges::find(path, position, &PathNode::pos);

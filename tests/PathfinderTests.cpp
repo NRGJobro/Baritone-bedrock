@@ -53,6 +53,119 @@ baritone::SearchStatus run(baritone::Pathfinder& finder, const FakeWorld& world)
     return finder.getStatus();
 }
 
+void continuationPreservesCommittedRoute() {
+    using namespace baritone;
+    assert(!shouldPlanContinuation(10, 100, 0));
+    assert(shouldPlanContinuation(76, 100, 0));
+    // A short appended segment does not cascade into hundreds of future nodes.
+    assert(!shouldPlanContinuation(90, 105, 99));
+    assert(shouldPlanContinuation(99, 105, 99));
+    assert(shouldPlanContinuation(105, 105, 99));
+    assert(!shouldPlanContinuation(0, 0, 0));
+    std::vector<PathNode> path{
+        {{0, 0, 0}, MovementType::Start, 0.0},
+        {{1, 1, 0}, MovementType::Ascend, 7.0},
+        {{2, 1, 0}, MovementType::Traverse, 3.0}
+    };
+    const auto original = path;
+    // A search from the middle must not replace the current route.
+    assert(!appendPathContinuation(path, {
+        {{1, 1, 0}, MovementType::Start, 0.0},
+        {{1, 1, 1}, MovementType::Traverse, 3.0}
+    }));
+    assert(!appendPathContinuation(path, {{{2, 1, 0}, MovementType::Start, 0.0}}));
+    assert(path.size() == original.size());
+    const std::size_t reachedEndpointIndex = path.size();
+    assert(appendPathContinuation(path, {
+        {{2, 1, 0}, MovementType::Start, 0.0},
+        {{3, 1, 0}, MovementType::Traverse, 3.0},
+        {{4, 0, 0}, MovementType::Descend, 4.0}
+    }));
+    for (std::size_t i = 0; i < original.size(); ++i) {
+        assert(path[i].pos == original[i].pos);
+        assert(path[i].movement == original[i].movement);
+        assert(path[i].costFromPrevious == original[i].costFromPrevious);
+    }
+    // An executor already waiting at the endpoint resumes at the new edge.
+    assert(path[reachedEndpointIndex].pos == (BlockPos{3, 1, 0}));
+    assert(path[reachedEndpointIndex].movement == MovementType::Traverse);
+}
+
+void jumpLandingKeepsExistingRoute() {
+    using namespace baritone;
+    FakeWorld world;
+    std::vector<PathNode> path{
+        {{0, 0, 0}, MovementType::Start, 0.0},
+        {{3, 0, 0}, MovementType::Parkour, 10.0},
+        {{4, 0, 0}, MovementType::Traverse, 3.0},
+        {{5, 0, 1}, MovementType::Diagonal, 4.0}
+    };
+    assert(jumpLandingIndex(path, 1, {3, 0, 0}, world) == 1);
+    assert(jumpLandingIndex(path, 1, {4, 0, 0}, world) == 2);
+    assert(jumpLandingIndex(path, 1, {5, 0, 1}, world) == 3);
+    assert(jumpLandingIndex(path, 1, {4, 0, 1}, world) == path.size());
+    world.solid.erase({4, -1, 0});
+    assert(jumpLandingIndex(path, 1, {4, 0, 0}, world) == path.size());
+    world.solid.insert({4, -1, 0});
+    path[2].movement = MovementType::Parkour;
+    assert(jumpLandingIndex(path, 1, {5, 0, 1}, world) == path.size());
+}
+
+void repairsAdjacentJumpLandingWithoutReplanning() {
+    using namespace baritone;
+    FakeWorld world;
+    const std::vector<PathNode> original{
+        {{0, 0, 0}, MovementType::Start, 0.0},
+        {{3, 0, 0}, MovementType::Parkour, 10.0},
+        {{4, 0, 0}, MovementType::Traverse, 3.0}
+    };
+    auto path = original;
+    assert(repairJumpLanding(path, 1, {3, 0, 1}, world));
+    assert(path.size() == original.size());
+    assert(path[1].movement == MovementType::Traverse);
+    assert(path[2].pos == original[2].pos);
+    assert(path[2].costFromPrevious == original[2].costFromPrevious);
+    path = original;
+    world.solid.erase({3, -1, 1});
+    assert(!repairJumpLanding(path, 1, {3, 0, 1}, world));
+    world.solid.insert({3, -1, 1});
+    world.solid.insert({3, 1, 0});
+    assert(!repairJumpLanding(path, 1, {3, 0, 1}, world));
+    assert(path[1].movement == MovementType::Parkour);
+}
+
+void continuationWaitsForKnownFooting() {
+    using namespace baritone;
+    FakeWorld world;
+    world.solid.clear();
+    world.solid.insert({0, 9, 0});
+    world.solid.insert({1, 9, 0});
+    world.maxLoadedX = 1;
+    auto goal = std::make_shared<GoalBlock>(BlockPos{4, 10, 0});
+    PathOptions options;
+    options.allowBridge = false;
+    options.allowBreak = false;
+    options.allowParkour = false;
+    Pathfinder finder;
+    std::vector<PathNode> path{
+        {{0, 10, 0}, MovementType::Start, 0.0},
+        {{1, 10, 0}, MovementType::Traverse, 3.0}
+    };
+    finder.begin(path.back().pos, goal, options);
+    assert(run(finder, world) == SearchStatus::Failed);
+    assert(!appendPathContinuation(path, finder.getPath()));
+    assert(path.size() == 2); // No invented movement off the platform.
+
+    world.maxLoadedX = 4;
+    for (int x = 2; x <= 4; ++x)
+        world.solid.insert({x, 9, 0});
+    finder.begin(path.back().pos, goal, options);
+    assert(run(finder, world) == SearchStatus::Found);
+    assert(appendPathContinuation(path, finder.getPath()));
+    assert(path.size() == 5);
+    assert(goal->isInGoal(path.back().pos));
+}
+
 void findsStraightPath() {
     FakeWorld world;
     baritone::Pathfinder finder;
@@ -806,6 +919,14 @@ void miningBuildsOnlyAcrossSafeWater() {
 
 void modelsBedrockPlayerPhysics() {
     using namespace baritone::bedrock_physics;
+    assert(!parkourSprintReady(4, false, true, 10, 0.05f));
+    assert(!parkourSprintReady(4, false, true, 0, 0.28f));
+    assert(!parkourSprintReady(4, false, false, 10, 0.28f));
+    assert(parkourSprintReady(4, false, true, 2, 0.24f));
+    assert(!parkourSprintReady(3, false, true, 2, 0.10f));
+    assert(parkourSprintReady(3, false, true, 2, 0.20f));
+    assert(!parkourSprintReady(2, true, true, 2, 0.10f));
+    assert(parkourSprintReady(2, false, false, 0, 0.10f));
     float walkVelocity = 0.f;
     float sprintVelocity = 0.f;
     for (int tick = 0; tick < 100; ++tick) {
@@ -830,6 +951,10 @@ int main() {
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
     findsStraightPath();
+    continuationPreservesCommittedRoute();
+    jumpLandingKeepsExistingRoute();
+    repairsAdjacentJumpLandingWithoutReplanning();
+    continuationWaitsForKnownFooting();
     climbsOneBlock();
     buildsAndClimbsOverGap();
     respectsStepUpToggle();

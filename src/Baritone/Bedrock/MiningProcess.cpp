@@ -217,6 +217,7 @@ void MiningProcess::start(std::vector<int> ids, std::vector<std::string> names, 
     candidates.clear();
     blacklist.clear();
     noVisibleTargetPosition.reset();
+    pathingTarget.reset();
     breakingTarget.reset();
     pendingPickupTargets.clear();
     pendingPickupActors.clear();
@@ -259,6 +260,7 @@ void MiningProcess::startTargets(std::vector<BlockPos> targets) {
     candidates.clear();
     blacklist.clear();
     noVisibleTargetPosition.reset();
+    pathingTarget.reset();
     breakingTarget.reset();
     pendingPickupTargets.clear();
     pendingPickupActors.clear();
@@ -294,6 +296,7 @@ void MiningProcess::cancel(BaritoneController& controller) {
     candidates.clear();
     activePatch.clear();
     noVisibleTargetPosition.reset();
+    pathingTarget.reset();
     breakingTarget.reset();
     pendingPickupTargets.clear();
     pendingPickupActors.clear();
@@ -466,8 +469,15 @@ void MiningProcess::tick(BaritoneController& controller) {
             pickupTicks = 0;
             pickupPathAttempts = 0;
             controller.stop();
-            if (pendingPickupTargets.empty() && pendingPickupActors.empty())
+            if (pendingPickupTargets.empty() && pendingPickupActors.empty()) {
                 collectingDrops = false;
+                // The player's position may have changed while collecting the
+                // drop. Re-scan from here so the next route is chosen from all
+                // matching blocks, not only the remainder of the old patch.
+                activePatch.clear();
+                candidates.clear();
+                pathingTarget.reset();
+            }
             if (pendingCompletion && pendingPickupTargets.empty() && pendingPickupActors.empty()) {
                 pendingCompletion = false;
                 active = false;
@@ -529,6 +539,9 @@ void MiningProcess::tick(BaritoneController& controller) {
             controller.stop();
             if (pendingPickupTargets.empty() && pendingPickupActors.empty()) {
                 collectingDrops = false;
+                activePatch.clear();
+                candidates.clear();
+                pathingTarget.reset();
             }
             if (pendingCompletion && pendingPickupTargets.empty() && pendingPickupActors.empty()) {
                 pendingCompletion = false;
@@ -659,8 +672,10 @@ void MiningProcess::tick(BaritoneController& controller) {
             if (breakTicks > 0)
                 player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
             breakingTarget.reset();
+            pathingTarget.reset();
             breakTicks = 0;
             controller.goTo(std::make_shared<GoalGetToBlock>(target));
+            pathingTarget = target;
             return;
         }
         const glm::ivec3 targetVector{target.x, target.y, target.z};
@@ -773,23 +788,31 @@ void MiningProcess::tick(BaritoneController& controller) {
         }
         if (directTarget != targets.end()) {
             noVisibleTargetPosition.reset();
+            pathingTarget.reset();
             beginBreaking(*directTarget);
             return;
         }
 
-        // This patch is genuinely blocked by unsafe/unbreakable terrain. Skip
-        // only this connected patch; blacklisting every result from the same
-        // scan made mining bounce through unrelated hallway goals.
-        const auto failedTargets = activePatch.empty() ? candidates : activePatch;
-        for (const auto& candidate : failedTargets)
-            blacklist.insert(candidate);
+        // Retire only the nearest block whose route actually failed. Another
+        // member of the same vein may be reachable from a different face, and
+        // should become the next-closest target instead of losing the patch.
+        if (pathingTarget)
+            blacklist.insert(*pathingTarget);
+        else {
+            const auto failedTargets = activePatch.empty() ? candidates : activePatch;
+            for (const auto& candidate : failedTargets)
+                blacklist.insert(candidate);
+        }
         std::erase_if(candidates, [&](const auto& candidate) {
             return blacklist.contains(candidate);
         });
-        activePatch.clear();
+        std::erase_if(activePatch, [&](const auto& candidate) {
+            return blacklist.contains(candidate);
+        });
+        pathingTarget.reset();
         noVisibleTargetPosition.reset();
         controller.stop();
-        pendingMessage = "Nearest ore patch is blocked; trying the next closest patch.";
+        pendingMessage = "Nearest mining target is blocked; trying the next closest target.";
     }
 
     // Keep working on the known vein after each drop. A 64-block scan is
@@ -815,9 +838,9 @@ void MiningProcess::tick(BaritoneController& controller) {
             return;
         }
 
-        // The scan is sorted by distance, so the first candidate is the
-        // nearest block. Flood-fill all matching blocks touching it and keep
-        // that patch as the active composite goal.
+        // The scan returns the nearest block. Flood-fill matching blocks that
+        // touch it so immediately reachable vein members can still be mined
+        // without a pause; the actual path goal remains the nearest member.
         activePatch = collectPatch(candidates.front(), candidates);
         if (activePatch.empty())
             activePatch = {candidates.front()};
@@ -850,11 +873,24 @@ void MiningProcess::tick(BaritoneController& controller) {
         return;
     }
 
-    std::vector<std::shared_ptr<Goal>> goals;
-    goals.reserve(activePatch.size());
-    for (const auto& candidate : activePatch)
-        goals.push_back(std::make_shared<GoalGetToBlock>(candidate));
-    if (!controller.goTo(std::make_shared<GoalComposite>(std::move(goals)))) {
+    // Re-evaluate from the player's current position after every mined or
+    // rejected block. A single goal prevents A* from choosing a farther ore
+    // merely because it is another member of the active connected patch.
+    const auto origin = playerFeetBlock(player);
+    const auto nearest = std::ranges::min_element(activePatch, [&](const auto& left, const auto& right) {
+        const auto leftDistance = distanceSquared(left, origin);
+        const auto rightDistance = distanceSquared(right, origin);
+        if (leftDistance != rightDistance)
+            return leftDistance < rightDistance;
+        if (left.y != right.y)
+            return left.y < right.y;
+        if (left.x != right.x)
+            return left.x < right.x;
+        return left.z < right.z;
+    });
+    pathingTarget = *nearest;
+    if (!controller.goTo(std::make_shared<GoalGetToBlock>(*pathingTarget))) {
+        pathingTarget.reset();
         active = false;
         restoreHotbar();
         restoreBreakPolicy(controller);
@@ -935,14 +971,23 @@ std::vector<BlockPos> MiningProcess::scan() const {
         return {};
 
     const auto origin = playerFeetBlock(player);
+    const auto nearer = [&](const auto& left, const auto& right) {
+        const auto leftDistance = distanceSquared(left, origin);
+        const auto rightDistance = distanceSquared(right, origin);
+        if (leftDistance != rightDistance)
+            return leftDistance < rightDistance;
+        if (left.y != right.y)
+            return left.y < right.y;
+        if (left.x != right.x)
+            return left.x < right.x;
+        return left.z < right.z;
+    };
     if (fixedTargetMode) {
         auto found = fixedTargets;
         std::erase_if(found, [&](const auto& pos) {
             return blacklist.contains(pos) || !matches(blockLegacyAt(region, pos));
         });
-        std::ranges::sort(found, [&](const auto& left, const auto& right) {
-            return distanceSquared(left, origin) < distanceSquared(right, origin);
-        });
+        std::ranges::sort(found, nearer);
         if (found.size() > 48)
             found.resize(48);
         return found;
@@ -951,10 +996,15 @@ std::vector<BlockPos> MiningProcess::scan() const {
     std::vector<BlockPos> found;
     found.reserve(64);
 
-    // Search horizontal shells from the player outward. Mining only needs the
-    // nearest patch; scanning the entire 64-block disk before accepting the
-    // first nearby ore was the main source of the one-second hitch.
-    for (int shell = 0; shell <= scanRadius && found.empty(); ++shell) {
+    // Search horizontal shells from the player outward, but do not stop at the
+    // first shell containing ore: that ore may be far above or below while a
+    // block in the next shell is much closer in true 3D distance. Once the
+    // next shell's minimum possible distance exceeds the best match, no later
+    // shell can contain a closer block and the scan can end cheaply.
+    double bestDistance = std::numeric_limits<double>::infinity();
+    for (int shell = 0; shell <= scanRadius; ++shell) {
+        if (!found.empty() && static_cast<double>(shell) * shell > bestDistance)
+            break;
         for (int dx = -shell; dx <= shell; ++dx) {
             for (int dz = -shell; dz <= shell; ++dz) {
                 if (std::max(std::abs(dx), std::abs(dz)) != shell ||
@@ -964,19 +1014,24 @@ std::vector<BlockPos> MiningProcess::scan() const {
                     const BlockPos pos{origin.x + dx, y, origin.z + dz};
                     if (blacklist.contains(pos))
                         continue;
-                    if (matches(blockLegacyAt(region, pos)))
+                    if (!matches(blockLegacyAt(region, pos)))
+                        continue;
+                    const double distance = distanceSquared(pos, origin);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        found.clear();
+                    }
+                    if (distance == bestDistance)
                         found.push_back(pos);
                 }
             }
         }
     }
 
-    std::ranges::sort(found, [&](const auto& left, const auto& right) {
-        return distanceSquared(left, origin) < distanceSquared(right, origin);
-    });
-    // Keep enough nearby results to flood-fill a whole vein. The active goal
-    // is still limited to one connected patch, so this does not make A* solve
-    // every ore in the scan radius at once.
+    std::ranges::sort(found, nearer);
+    // Equal-distance matches are retained for deterministic tie handling. A
+    // connected vein is discovered directly by collectPatch, so farther scan
+    // results are intentionally omitted until the next nearest-target cycle.
     if (found.size() > 128)
         found.resize(128);
     return found;
@@ -1043,6 +1098,7 @@ std::vector<BlockPos> MiningProcess::collectPatch(const BlockPos& seed,
 }
 
 void MiningProcess::beginBreaking(const BlockPos& target) {
+    pathingTarget.reset();
     const BedrockWorld world(MC::getRegion());
     const auto state = world.getBlock(target);
     if (!state.loaded || !state.breakable || MovementGenerator::wouldExposeLiquid(world, target)) {

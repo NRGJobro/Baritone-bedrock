@@ -33,6 +33,10 @@ class MiningProcess {
     std::vector<BlockPos> fixedTargets;
     std::unordered_set<BlockPos, BlockPosHash> blacklist;
     std::optional<BlockPos> noVisibleTargetPosition;
+    // The single matching block the current route is trying to reach. Mining
+    // deliberately paths to one nearest target at a time instead of giving A*
+    // a composite goal that may select a farther member of the ore patch.
+    std::optional<BlockPos> pathingTarget;
     std::optional<BlockPos> breakingTarget;
     // Drops are collected as a batch after every immediately reachable block
     // in the current patch has been mined. This keeps vein mining smooth while
