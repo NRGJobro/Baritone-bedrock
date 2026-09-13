@@ -38,6 +38,7 @@ void* ClientInstance::getOptions() {
     return this->getUser()->getOptions();
 }
 
+
 BlockSource* ClientInstance::getBlockSource() {
     return Utils::CallVFunc<30, BlockSource*>(this);
 }

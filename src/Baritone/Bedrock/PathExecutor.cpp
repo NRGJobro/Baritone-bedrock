@@ -2,6 +2,7 @@
 #include "../Core/NavigationPolicy.h"
 
 #include "BedrockPhysics.h"
+#include "BedrockBlockBreaking.h"
 #include "BedrockWorld.h"
 #include "../../SDK/MC.h"
 #include "../../SDK/Client/Input/MoveInputComponent.h"
@@ -362,7 +363,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
         if (foundUnbreakable) {
             if (obstructionBreakTicks > 0 && player->getGameMode() != nullptr)
-                player->getGameMode()->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
+                bedrock_block_breaking::stop(player, {activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
             clearInput(player);
             activeBreakIndex = static_cast<std::size_t>(-1);
             obstructionBreakTicks = 0;
@@ -378,7 +379,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
         if (foundUnsafe) {
             if (obstructionBreakTicks > 0 && player->getGameMode() != nullptr)
-                player->getGameMode()->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
+                bedrock_block_breaking::stop(player, {activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
             clearInput(player);
             activeBreakIndex = static_cast<std::size_t>(-1);
             obstructionBreakTicks = 0;
@@ -396,7 +397,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 return ExecutionStatus::NoPlayer;
             if (activeBreakIndex != index || activeBreakPos != *obstruction) {
                 if (obstructionBreakTicks > 0)
-                    gameMode->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
+                    bedrock_block_breaking::stop(player, {activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
                 activeBreakIndex = index;
                 activeBreakPos = *obstruction;
                 obstructionBreakTicks = 0;
@@ -420,12 +421,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             const glm::ivec3 target{obstruction->x, obstruction->y, obstruction->z};
             const auto playerPosition = player->getPosition();
             const auto face = facingFromPlayer(playerPosition, *obstruction);
-            bool destroyed = false;
-            player->swing();
-            if (obstructionBreakTicks == 0)
-                gameMode->startDestroyBlock(target, face, destroyed);
-            else
-                gameMode->continueDestroyBlock(target, face, playerPosition, destroyed);
+            bedrock_block_breaking::tick(player, target, face, playerPosition);
             ++obstructionBreakTicks;
             // Breaking and newly opened descents can shift the actor away from
             // the exact block-center rail. Keep a short recovery window after
@@ -434,7 +430,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             ticksWithoutProgress = 0;
             ticksOutsidePath = 0;
             if (obstructionBreakTicks > 240) {
-                gameMode->stopDestroyBlock(target);
+                bedrock_block_breaking::stop(player, target);
                 lastFailureReason = "breaking timed out";
                 return ExecutionStatus::Stuck;
             }
@@ -442,7 +438,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
 
         if (obstructionBreakTicks > 0 && player->getGameMode() != nullptr)
-            player->getGameMode()->stopDestroyBlock({activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
+            bedrock_block_breaking::stop(player, {activeBreakPos.x, activeBreakPos.y, activeBreakPos.z});
         activeBreakIndex = static_cast<std::size_t>(-1);
         obstructionBreakTicks = 0;
         blockedTerrainTicks = 0;
@@ -1488,7 +1484,7 @@ void PathExecutor::stop(LocalPlayer* player) {
     if (activeBreakIndex != static_cast<std::size_t>(-1) && player != nullptr &&
         player->getGameMode() != nullptr) {
         const glm::ivec3 target{activeBreakPos.x, activeBreakPos.y, activeBreakPos.z};
-        player->getGameMode()->stopDestroyBlock(target);
+        bedrock_block_breaking::stop(player, target);
     }
     restoreMiningHotbar(player);
     path.clear();
@@ -1572,35 +1568,13 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
 }
 
 void PathExecutor::selectBestTool(LocalPlayer* player, const BlockPos& target) {
-    auto* source = MC::getRegion();
-    if (player == nullptr || source == nullptr || player->getSupplies() == nullptr)
-        return;
-    auto* inventory = player->getSupplies()->getInventory();
-    auto* block = source->getBlock(target.x, target.y, target.z);
-    if (inventory == nullptr || block == nullptr)
-        return;
-    if (previousMiningHotbarSlot < 0)
-        previousMiningHotbarSlot = player->getSupplies()->getSelectedHotbarSlot();
-    int bestSlot = previousMiningHotbarSlot;
-    float bestSpeed = 0.f;
-    for (int slot = 0; slot < 9; ++slot) {
-        auto* stack = inventory->getItem(slot);
-        if (stack == nullptr || !stack->isValid())
-            continue;
-        const float speed = stack->getDestroySpeed(block);
-        if (speed > bestSpeed) {
-            bestSpeed = speed;
-            bestSlot = slot;
-        }
-    }
-    player->getSupplies()->setSelectedHotbarSlot(bestSlot);
+    // Preserve the server-synchronized equipped slot; see MiningProcess.
+    (void)player;
+    (void)target;
 }
 
 void PathExecutor::restoreMiningHotbar(LocalPlayer* player) {
-    if (previousMiningHotbarSlot < 0)
-        return;
-    if (player != nullptr && player->getSupplies() != nullptr)
-        player->getSupplies()->setSelectedHotbarSlot(previousMiningHotbarSlot);
+    (void)player;
     previousMiningHotbarSlot = -1;
 }
 

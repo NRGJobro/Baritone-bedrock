@@ -1,5 +1,8 @@
 #include "BaritoneModule.h"
 
+#include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
+
+
 #include "../../../SDK/MC.h"
 #include "../../../Baritone/Core/AdvancedGoals.h"
 #include "../../../Baritone/Bedrock/BedrockWorld.h"
@@ -108,6 +111,7 @@ void BaritoneModule::onTick() {
 
 void BaritoneModule::onPostTick() {
     controller.postTick();
+    baritone::bedrock_block_breaking::flushCommit();
 }
 
 void BaritoneModule::onBeforeRenderLevel() {

@@ -4,6 +4,7 @@
 #include "../Core/AdvancedGoals.h"
 #include "../Core/Movement.h"
 #include "BedrockWorld.h"
+#include "BedrockBlockBreaking.h"
 #include "../../SDK/MC.h"
 #include "../../SDK/Client/ClientInstance.h"
 #include "../../SDK/Core/Minecraft.h"
@@ -289,7 +290,7 @@ void MiningProcess::cancel(BaritoneController& controller) {
     if (breakingTarget) {
         if (const auto player = MC::getLocalPlayer(); player != nullptr && player->getGameMode() != nullptr) {
             const auto& target = *breakingTarget;
-            player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+            bedrock_block_breaking::stop(player, {target.x, target.y, target.z});
         }
     }
     active = false;
@@ -612,7 +613,7 @@ void MiningProcess::tick(BaritoneController& controller) {
         const auto currentTargetState = world.getBlock(target);
         if (!currentTargetState.loaded) {
             if (breakTicks > 0)
-                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+                bedrock_block_breaking::stop(player, {target.x, target.y, target.z});
             breakingTarget.reset();
             breakTicks = 0;
             controller.stop();
@@ -621,13 +622,14 @@ void MiningProcess::tick(BaritoneController& controller) {
         if (currentTargetState.solid && breakingTargetCountsGoal &&
             !matches(blockLegacyAt(region, target))) {
             if (breakTicks > 0)
-                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+                bedrock_block_breaking::stop(player, {target.x, target.y, target.z});
             breakingTarget.reset();
             breakTicks = 0;
             controller.stop();
             return;
         }
         if (!currentTargetState.solid) {
+            bedrock_block_breaking::stop(player, {target.x, target.y, target.z});
             const bool wasGoal = breakingTargetCountsGoal;
             breakingTargetCountsGoal = true;
             if (!wasGoal) {
@@ -655,7 +657,7 @@ void MiningProcess::tick(BaritoneController& controller) {
 
         if (!currentTargetState.breakable || MovementGenerator::wouldExposeLiquid(world, target)) {
             if (breakTicks > 0)
-                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+                bedrock_block_breaking::stop(player, {target.x, target.y, target.z});
             blacklist.insert(target);
             std::erase(candidates, target);
             std::erase(activePatch, target);
@@ -670,7 +672,7 @@ void MiningProcess::tick(BaritoneController& controller) {
         if (distanceToBlock(position, target) > 6.10f ||
             !isVisibleFromPlayer(player, region, target)) {
             if (breakTicks > 0)
-                player->getGameMode()->stopDestroyBlock({target.x, target.y, target.z});
+                bedrock_block_breaking::stop(player, {target.x, target.y, target.z});
             breakingTarget.reset();
             pathingTarget.reset();
             breakTicks = 0;
@@ -680,24 +682,15 @@ void MiningProcess::tick(BaritoneController& controller) {
         }
         const glm::ivec3 targetVector{target.x, target.y, target.z};
         const auto face = facingFromPlayer(position, target);
-        bool destroyed = false;
         if (breakTicks == 0)
             selectBestTool(target);
-        // GameMode's destroy calls update the world but do not always invoke
-        // the local first-person arm animation when driven by automation.
-        // Trigger the native mining swing every break tick so the visual hand
-        // motion matches ordinary player mining.
-        player->swing();
-        if (breakTicks == 0)
-            player->getGameMode()->startDestroyBlock(targetVector, face, destroyed);
-        else
-            player->getGameMode()->continueDestroyBlock(targetVector, face, position, destroyed);
+        bedrock_block_breaking::tick(player, targetVector, face, position);
         ++breakTicks;
 
         // A failed/indestructible target must not hold the whole process
         // forever. Baritone similarly blacklists implausible ore locations.
         if (breakTicks > 240) {
-            player->getGameMode()->stopDestroyBlock(targetVector);
+            bedrock_block_breaking::stop(player, targetVector);
             blacklist.insert(target);
             breakingTarget.reset();
             candidates.clear();
@@ -1118,37 +1111,14 @@ void MiningProcess::beginBreaking(const BlockPos& target) {
 }
 
 void MiningProcess::selectBestTool(const BlockPos& target) {
-    auto* player = MC::getLocalPlayer();
-    auto* region = MC::getRegion();
-    if (player == nullptr || region == nullptr || player->getSupplies() == nullptr)
-        return;
-    auto* inventory = player->getSupplies()->getInventory();
-    auto* block = region->getBlock(target.x, target.y, target.z);
-    if (inventory == nullptr || block == nullptr)
-        return;
-
-    int bestSlot = player->getSupplies()->getSelectedHotbarSlot();
-    float bestSpeed = 0.f;
-    for (int slot = 0; slot < 9; ++slot) {
-        auto* stack = inventory->getItem(slot);
-        if (stack == nullptr || !stack->isValid())
-            continue;
-        const float speed = stack->getDestroySpeed(block);
-        if (speed > bestSpeed) {
-            bestSpeed = speed;
-            bestSlot = slot;
-        }
-    }
-    if (previousHotbarSlot < 0)
-        previousHotbarSlot = player->getSupplies()->getSelectedHotbarSlot();
-    player->getSupplies()->setSelectedHotbarSlot(bestSlot);
+    // Directly writing selectedHotbarSlot does not emit MobEquipment and can
+    // desynchronize the item embedded in PlayerAuthInput from the server's
+    // equipped item. Lifeboat also reports non-vanilla tool speeds. Keep the
+    // user's server-synchronized selection (normally the visible pickaxe).
+    (void)target;
 }
 
 void MiningProcess::restoreHotbar() {
-    if (previousHotbarSlot < 0)
-        return;
-    if (auto* player = MC::getLocalPlayer(); player != nullptr && player->getSupplies() != nullptr)
-        player->getSupplies()->setSelectedHotbarSlot(previousHotbarSlot);
     previousHotbarSlot = -1;
 }
 

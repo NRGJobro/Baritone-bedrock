@@ -73,6 +73,7 @@ void SigInit::initRest() {
 
     ADD_SIG("MinecraftPackets::createPacket", "48 89 5C 24 ? 48 89 74 24 ? 55 57 41 56 48 8B EC 48 83 EC ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 45 ? 48 8B F9");
 
+
     ADD_SIG("BlockSource::fetchBlocks", "4C 8B DC 53 41 54 41 55 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 84 24 ? ? ? ? 44 8B 0A");
 
 
