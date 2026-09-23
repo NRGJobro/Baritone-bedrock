@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../../Baritone/BaritoneController.h"
+#include "../../../Baritone/Bedrock/ElytraProcess.h"
 #include "../../../Baritone/Bedrock/ExploreProcess.h"
 #include "../../../Baritone/Bedrock/MiningProcess.h"
 #include "../Module.h"
@@ -11,6 +12,7 @@ class BaritoneModule final : public Module {
     baritone::BaritoneController controller{};
     baritone::MiningProcess miningProcess{};
     baritone::ExploreProcess exploreProcess{};
+    baritone::ElytraProcess elytraProcess{};
     std::unordered_map<std::string, baritone::BlockPos> waypoints;
 
     void reply(const std::string& text) const;

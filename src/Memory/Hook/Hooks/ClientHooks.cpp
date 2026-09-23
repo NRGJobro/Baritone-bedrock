@@ -5,6 +5,7 @@
 #include "../../../Client/Module/ModuleManager.h"
 #include "../../../Client/Module/Modules/FullBrightModule.h"
 #include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
+#include "../../../Baritone/Bedrock/ElytraProcess.h"
 #include "../../../SDK/Client/Input/MouseDevice.h"
 #include "../../../SDK/MC.h"
 #include "../../../SDK/Network/LoopbackPacketSender.h"
@@ -40,9 +41,12 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
     static auto original = GET_HOOK(&LoopbackPacketSender_sendToServer);
     if (packet != nullptr) {
         const auto id = packet->getID();
-        if (id == MinecraftPacketIds::PlayerAuthInputPacket)
+        if (id == MinecraftPacketIds::PlayerAuthInputPacket) {
             baritone::bedrock_block_breaking::rewritePlayerAuthInput(
                 *static_cast<PlayerAuthInputPacket*>(packet));
+            baritone::ElytraProcess::rewriteAuthInput(
+                *static_cast<PlayerAuthInputPacket*>(packet));
+        }
         if (id == MinecraftPacketIds::PlayerAction) {
             const auto* action = static_cast<const LoggedPlayerActionPacket*>(packet);
             const int actionValue = static_cast<int>(action->action);
