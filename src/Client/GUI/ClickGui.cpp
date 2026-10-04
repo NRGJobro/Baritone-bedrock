@@ -443,7 +443,8 @@ void ClickGui::onKey(int key, bool pressed, bool& cancel) {
             baritoneSettingsExpanded = false;
         else {
             g_Client.clickGuiOpened = false;
-            MC::getMinecraftGame()->grabMouse();
+            if (auto* client = MC::getClientInstance(); client != nullptr)
+                client->grabMouse();
         }
     }
     rotationSliderDragging = false;

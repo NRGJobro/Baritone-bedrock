@@ -8,22 +8,8 @@ ClientInstance* MinecraftGame::getClientInstance() {
     return primary == instances.end() ? nullptr : primary->second.clientInstance.get();
 }
 
-std::shared_ptr<mce::TextureGroup> MinecraftGame::getTextureGroup() {
-    return hat::member_at<std::shared_ptr<mce::TextureGroup>>(this, 0x6B0);
-}
-
 FontRepository* MinecraftGame::getFontRepository() {
     return hat::member_at<FontRepository*>(this, 0x730);
-}
-
-void MinecraftGame::grabMouse() {
-    if (auto* client = getClientInstance(); client != nullptr)
-        Utils::CallVFunc<310, void>(client);
-}
-
-void MinecraftGame::releaseMouse() {
-    if (auto* client = getClientInstance(); client != nullptr)
-        Utils::CallVFunc<311, void>(client);
 }
 
 Font* MinecraftGame::getFont(const Fonts font) {

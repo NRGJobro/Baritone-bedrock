@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../Core/Minecraft.h"
 #include "../Network/LoopbackPacketSender.h"
 #include "../Render/Level/LevelRenderer.h"
 #include "../World/Actor/LocalPlayer.h"
@@ -11,7 +10,6 @@
 class ClientInstance {
 public:
     class MinecraftGame* getMinecraftGame();
-    Minecraft* getMinecraft();
     LevelRenderer* getLevelRenderer();
     LoopbackPacketSender* getPacketSender();
     mce::Camera& getCamera();
@@ -19,4 +17,6 @@ public:
 
     BlockSource* getBlockSource();
     LocalPlayer* getLocalPlayer();
+    void grabMouse();
+    void releaseMouse();
 };

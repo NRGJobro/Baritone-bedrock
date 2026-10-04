@@ -22,3 +22,5 @@ public:
     MinecraftPacketIds getID();
     std::string getName();
 };
+
+static_assert(sizeof(Packet) == 0x30);

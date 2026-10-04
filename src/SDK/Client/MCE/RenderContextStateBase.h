@@ -5,10 +5,11 @@
 #include "RasterizerStateDescription.h"
 #include "RenderTargetState.h"
 #include "SamplerStateDescription.h"
-#include "TextureBase.h"
 #include "ViewportInfo.h"
 
 namespace mce {
+    class TextureBase;
+
     struct RenderContextStateBase {
         BlendStateDescription blendStateDescription;
         DepthStencilStateDescription depthStencilStateDescription;

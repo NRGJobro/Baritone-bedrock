@@ -7,7 +7,6 @@
 #include "../../../Client/Module/Modules/FullBrightModule.h"
 #include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
 #include "../../../Baritone/Bedrock/ElytraProcess.h"
-#include "../../../SDK/Client/Input/MouseDevice.h"
 #include "../../../SDK/MC.h"
 #include "../../../SDK/Network/LoopbackPacketSender.h"
 #include "../../../SDK/Network/Packet/Packet.h"
@@ -50,6 +49,7 @@ struct LoggedPlayerActionPacket : Packet {
     int face;
     PlayerActionType action;
     std::uint64_t entityRuntimeID;
+    bool isFromServerPlayerMovementSystem;
 };
 
 const char* blockActionName(const PlayerActionType action) {
@@ -98,42 +98,6 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
                         blockActionName(action.type), static_cast<int>(action.type),
                         action.pos.x, action.pos.y, action.pos.z, static_cast<int>(action.face));
                 }
-                if (input->inputFlags.test(34)) {
-                    // PlayerAuthInput stores a unique_ptr to
-                    // PackedItemUseLegacyInventoryTransaction in the first
-                    // eight bytes after clientTick. Log only its scalar
-                    // ItemUse transaction fields; item/NBT data is ignored.
-                    const auto* packed = *reinterpret_cast<std::byte* const*>(input->padding);
-                    if (packed != nullptr) {
-                        const auto readInt = [packed](const std::size_t offset) {
-                            int value{};
-                            std::memcpy(&value, packed + offset, sizeof(value));
-                            return value;
-                        };
-                        const auto readByte = [packed](const std::size_t offset) {
-                            return std::to_integer<unsigned int>(packed[offset]);
-                        };
-                        const auto readVec = [packed](const std::size_t offset) {
-                            glm::vec3 value{};
-                            std::memcpy(&value, packed + offset, sizeof(value));
-                            return value;
-                        };
-                        // Packed header is 40 bytes; ItemUse's base occupies
-                        // 104 bytes in this build.
-                        constexpr std::size_t itemUse = 40;
-                        const glm::ivec3 transactionPos{readInt(itemUse + 112),
-                            readInt(itemUse + 116), readInt(itemUse + 120)};
-                        const auto from = readVec(itemUse + 232);
-                        const auto click = readVec(itemUse + 244);
-                        logF("[BlockTransaction] action={} trigger={} pos=({}, {}, {}) targetId={} face={} slot={} from=({:.3f}, {:.3f}, {:.3f}) click=({:.3f}, {:.3f}, {:.3f}) predicted={} cooldown={}",
-                            readInt(itemUse + 104), readByte(itemUse + 108),
-                            transactionPos.x, transactionPos.y, transactionPos.z,
-                            readInt(itemUse + 124), readByte(itemUse + 128),
-                            readInt(itemUse + 132), from.x, from.y, from.z,
-                            click.x, click.y, click.z, readByte(itemUse + 256),
-                            readByte(itemUse + 257));
-                    }
-                }
             }
         } else if (id == MinecraftPacketIds::InventoryTransaction) {
             // A survival block is not committed by CrackBlock alone. This is
@@ -155,11 +119,11 @@ void Keyboard_feed(const uint8_t keyCode, const bool down) {
 
     if (keyCode == VK_TAB && down && MC::getLocalPlayer() != nullptr) {
         g_Client.clickGuiOpened = !g_Client.clickGuiOpened;
-        if (auto* game = MC::getMinecraftGame(); game != nullptr) {
+        if (auto* client = MC::getClientInstance(); client != nullptr) {
             if (g_Client.clickGuiOpened)
-                game->releaseMouse();
+                client->releaseMouse();
             else
-                game->grabMouse();
+                client->grabMouse();
         }
         g_Client.blockedKeys[VK_TAB] = true;
         return;

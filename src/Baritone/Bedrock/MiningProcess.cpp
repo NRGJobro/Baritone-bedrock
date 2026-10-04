@@ -7,7 +7,6 @@
 #include "BedrockBlockBreaking.h"
 #include "../../SDK/MC.h"
 #include "../../SDK/Client/ClientInstance.h"
-#include "../../SDK/Core/Minecraft.h"
 #include "../../SDK/World/Actor/GameMode.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../SDK/World/Actor/Components/AABBShapeComponent.h"
@@ -39,19 +38,18 @@ struct ActorSnapshot {
 
 std::vector<ActorSnapshot> snapshotActors(bool* registryAvailable = nullptr) {
     std::vector<ActorSnapshot> result;
-    auto* client = MC::getClientInstance();
-    auto* minecraft = client == nullptr ? nullptr : client->getMinecraft();
-    auto registry = minecraft == nullptr ? nullptr : minecraft->getEntityRegistry();
+    auto* player = MC::getLocalPlayer();
+    auto* registry = player == nullptr ? nullptr : &player->getEntityContext().enttRegistry;
     if (registryAvailable != nullptr)
         *registryAvailable = registry != nullptr;
     if (registry == nullptr)
         return result;
 
-    auto view = registry->ownedRegistry.view<ActorOwnerComponent>();
+    auto view = registry->view<ActorOwnerComponent>();
     result.reserve(view.size_hint());
     for (const auto entityId : view) {
         auto& owner = view.get<ActorOwnerComponent>(entityId);
-        auto* actor = owner.entity.get();
+        auto* actor = owner.actor;
         auto* state = actor == nullptr ? nullptr : actor->tryGet<StateVectorComponent>();
         if (state == nullptr)
             continue;

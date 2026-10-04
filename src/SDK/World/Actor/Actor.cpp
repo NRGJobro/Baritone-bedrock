@@ -7,18 +7,8 @@ EntityContext& Actor::getEntityContext() const {
     return hat::member_at<EntityContext>(const_cast<Actor*>(this), 0x8);
 }
 
-Dimension* Actor::getDimension() {
-    return hat::member_at<Dimension*>(this, 0x1C8);
-}
-
 Level* Actor::getLevel() {
     return hat::member_at<Level*>(this, 0x1D8);
-}
-
-glm::vec3 Actor::getAttachPos(const ActorLocation location, const float a) {
-    static auto sig = GET_SIG("Actor::getAttachPos");
-    static auto getAttachPos = *(decltype(&Actor::getAttachPos)*)&sig;
-    return (this->*getAttachPos)(location, a);
 }
 
 glm::vec3 Actor::getPosition() {

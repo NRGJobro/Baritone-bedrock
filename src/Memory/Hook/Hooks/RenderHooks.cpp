@@ -50,6 +50,10 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
             const auto status = "Limiter: " + module->getController().getStatusLine();
             DrawUtils::drawText(status, {4.f, 4.f}, {0.85f, 0.95f, 1.f, 1.f}, 0.85f);
         }
+        // drawText queues glyph meshes on the current UI context. The native
+        // screen already flushed before this post-render hook, so flush our
+        // batch explicitly just as Phase does for custom HUD text.
+        renderContext->flushText();
     } else {
         g_Client.clickGuiOpened = false;
     }

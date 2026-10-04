@@ -14,5 +14,5 @@ Actor* HitResult::getEntity() const {
     const auto& owned = registry->ownedRegistry;
     const auto comp = owned.try_get<ActorOwnerComponent>(this->entity.entity);
 
-    return comp != nullptr ? comp->entity.get() : nullptr;
+    return comp != nullptr ? comp->actor : nullptr;
 }

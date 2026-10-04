@@ -6,10 +6,6 @@ MinecraftGame* ClientInstance::getMinecraftGame() {
     return hat::member_at<MinecraftGame*>(this, 0x1A8);
 }
 
-Minecraft* ClientInstance::getMinecraft() {
-    return hat::member_at<Minecraft*>(this, 0x1B0);
-}
-
 LevelRenderer* ClientInstance::getLevelRenderer() {
     return hat::member_at<LevelRenderer*>(this, 0x1C0);
 }
@@ -33,4 +29,12 @@ BlockSource* ClientInstance::getBlockSource() {
 
 LocalPlayer* ClientInstance::getLocalPlayer() {
     return Utils::CallVFunc<31, LocalPlayer*>(this);
+}
+
+void ClientInstance::grabMouse() {
+    Utils::CallVFunc<310, void>(this);
+}
+
+void ClientInstance::releaseMouse() {
+    Utils::CallVFunc<311, void>(this);
 }

@@ -19,8 +19,11 @@ enum class PlayerActionType : int {
 struct PlayerBlockActionData {
     PlayerActionType type;
     glm::ivec3 pos;
-    FacingID face;
+    int face;
 };
+
+struct PackedItemUseLegacyInventoryTransaction {};
+struct ItemStackRequestData {};
 
 class PlayerAuthInputPacket : public Packet {
 public:
@@ -42,6 +45,11 @@ public:
     int playMode;
     int interactionModel;
     std::uint64_t clientTick;
-    std::byte padding[0x10];
+    std::unique_ptr<PackedItemUseLegacyInventoryTransaction> itemUseTransaction;
+    std::unique_ptr<ItemStackRequestData> itemStackRequest;
     std::vector<PlayerBlockActionData> blockActions;
+    std::uint64_t clientPredictedVehicle;
 };
+
+static_assert(sizeof(PlayerBlockActionData) == 0x14);
+static_assert(sizeof(PlayerAuthInputPacket) == 0xE0);

@@ -1,12 +1,14 @@
 #pragma once
 
-#include "RenderMaterialInfo.h"
+#include "../../Util/HashedString.h"
 
 namespace mce {
     class MaterialPtr {
-    public:
-        std::shared_ptr<RenderMaterialInfo> materialInfo;
+        std::byte reserved[0x138];
 
+    public:
         static MaterialPtr* createMaterial(const HashedString& name);
     };
+
+    static_assert(sizeof(MaterialPtr) == 0x138);
 }

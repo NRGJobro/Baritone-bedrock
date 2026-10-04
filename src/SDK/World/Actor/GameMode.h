@@ -6,6 +6,7 @@
 
 class Actor;
 class ItemStack;
+enum class InputMode : std::uint32_t;
 
 // Same-version Bedrock GameMode interface.  Placement is routed through the
 // game's normal interaction code so reach, permissions and inventory are
@@ -13,15 +14,15 @@ class ItemStack;
 class GameMode {
     virtual void destructor();
 public:
-    virtual bool startDestroyBlock(const glm::ivec3&, FacingID, bool&);
-    virtual bool destroyBlock(const glm::ivec3&, FacingID);
-    virtual bool continueDestroyBlock(const glm::ivec3&, FacingID, const glm::vec3&, bool&);
-    virtual void stopDestroyBlock(const glm::ivec3&);
-    virtual void startBuildBlock(const glm::ivec3&, FacingID, bool auth);
-    virtual bool buildBlock(const glm::ivec3&, FacingID, bool auth = false);
-    virtual void continueBuildBlock(const glm::ivec3&, FacingID);
-    virtual void stopBuildBlock();
-    virtual void tick();
-    virtual float getPickRange(const int&);
-    virtual bool useItem(ItemStack&);
+    virtual std::int64_t startDestroyBlock(const glm::ivec3&, std::uint8_t, bool&);
+    virtual std::int64_t destroyBlock(const glm::ivec3&, std::uint8_t);
+    virtual std::int64_t continueDestroyBlock(const glm::ivec3&, std::uint8_t, const glm::vec3&, bool&);
+    virtual std::int64_t stopDestroyBlock(const glm::ivec3&);
+    virtual std::int64_t startBuildBlock(const glm::ivec3&, std::uint8_t, bool auth);
+    virtual std::int64_t buildBlock(const glm::ivec3&, FacingID, bool auth = false);
+    virtual std::int64_t continueBuildBlock(const glm::ivec3&, std::uint8_t);
+    virtual std::int64_t stopBuildBlock();
+    virtual std::int64_t tick();
+    virtual std::int64_t getPickRange(const InputMode&, bool);
+    virtual bool useItem(ItemStack&, std::uint8_t mode = 0);
 };

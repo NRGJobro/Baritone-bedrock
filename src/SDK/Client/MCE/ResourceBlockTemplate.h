@@ -1,9 +1,10 @@
 #pragma once
 
 #include "PerFrameHandleTracker.h"
-#include "ResourceServiceTextureDescription.h"
 
 namespace mce {
+    struct ResourceServiceTextureDescription;
+
     template<typename type_t>
     struct ResourceBlockTemplate {
         std::shared_ptr<ResourceServiceTextureDescription> debugInfoBLock = nullptr;

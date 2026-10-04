@@ -13,10 +13,6 @@ void SigInit::initRender() {
         "E8 ? ? ? ? F3 0F 5C F7 F3 0F 58 F7");
     ADD_SIG("mce::RenderMaterialGroup::common",
         "48 8D 15 ? ? ? ? 4C 8D 45 ? E8 ? ? ? ? 48 8D 4D ? E8 ? ? ? ? 48 8D 0D ? ? ? ? E8 ? ? ? ? 48 8D 0D ? ? ? ? E8 ? ? ? ? E9 ? ? ? ? 48 8D 0D");
-    ADD_SIG("mce::TextureGroup::uploadTexture",
-        "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 4D 89 CF 4D 89 C6 48 89 D6 48 89 CB");
-    ADD_SIG("mce::LRUCache::remove",
-        "41 57 41 56 56 57 53 48 83 EC ? 48 89 CE 48 8D 79 ? 4C 8B 42");
 }
 
 void SigInit::initHooks() {

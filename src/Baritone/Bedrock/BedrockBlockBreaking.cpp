@@ -96,8 +96,6 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
     if (changedTarget) {
         if (pendingBreak) {
             pendingAbort = pendingBreak->target;
-            if (pendingBreak->player != nullptr)
-                hat::member_at<bool>(pendingBreak->player, 0xAFA) = false;
         }
         pendingBreak = PendingBreak{};
         pendingBreak->player = player;
@@ -152,11 +150,11 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
         // the active destroy context used to build/validate durability data.
         hat::member_at<float>(gameMode, 0x24) = 1.f;
         bool destroyed = false;
-        gameMode->continueDestroyBlock(pendingBreak->target, pendingBreak->face,
+        gameMode->continueDestroyBlock(pendingBreak->target, static_cast<std::uint8_t>(pendingBreak->face),
             playerPosition, destroyed);
         if (!destroyed) {
             auto commitTarget = pendingBreak->target;
-            gameMode->destroyBlock(commitTarget, pendingBreak->face);
+            gameMode->destroyBlock(commitTarget, static_cast<std::uint8_t>(pendingBreak->face));
         }
         if (hitWrapper != nullptr && savedHit)
             hitWrapper->hitResult = *savedHit;
@@ -168,13 +166,11 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
         return;
     }
     if (!pendingBreak->commitSent) {
-        auto& isDestroying = hat::member_at<bool>(player, 0xAFA);
-        isDestroying = true;
         bool destroyed = false;
         if (changedTarget) {
-            gameMode->startDestroyBlock(target, face, destroyed);
+            gameMode->startDestroyBlock(target, static_cast<std::uint8_t>(face), destroyed);
         } else {
-            gameMode->continueDestroyBlock(target, face, playerPosition, destroyed);
+            gameMode->continueDestroyBlock(target, static_cast<std::uint8_t>(face), playerPosition, destroyed);
         }
         const float progress = hat::member_at<float>(gameMode, 0x24);
         if (destroyed || progress >= 0.999f) {
@@ -190,7 +186,6 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
 void stop(LocalPlayer* player, const glm::ivec3& target) {
     const bool completionWasSent = pendingBreak && pendingBreak->commitSent;
     if (player != nullptr) {
-        hat::member_at<bool>(player, 0xAFA) = false;
         if (player->getGameMode() != nullptr)
             player->getGameMode()->stopDestroyBlock(target);
     }
@@ -243,7 +238,7 @@ void rewritePlayerAuthInput(PlayerAuthInputPacket& packet) {
                 });
             if (!hasFinalCrack) {
                 packet.blockActions.push_back({PlayerActionType::CrackBlock,
-                    pendingBreak->target, pendingBreak->face});
+                    pendingBreak->target, static_cast<int>(pendingBreak->face)});
             }
             pendingBreak->nativeCommitArmed = false;
             pendingBreak->commitSent = true;
@@ -260,7 +255,7 @@ void rewritePlayerAuthInput(PlayerAuthInputPacket& packet) {
 
     if (pendingAbort) {
         packet.blockActions.push_back(
-            {PlayerActionType::AbortDestroyBlock, *pendingAbort, FacingID::Down});
+            {PlayerActionType::AbortDestroyBlock, *pendingAbort, static_cast<int>(FacingID::Down)});
         pendingAbort.reset();
     }
 
@@ -272,7 +267,7 @@ void rewritePlayerAuthInput(PlayerAuthInputPacket& packet) {
         } else {
             if (pendingBreak->startPending) {
                 packet.blockActions.push_back({PlayerActionType::StartDestroyBlock,
-                    pendingBreak->target, pendingBreak->face});
+                    pendingBreak->target, static_cast<int>(pendingBreak->face)});
                 pendingBreak->startPending = false;
             }
 
@@ -287,7 +282,7 @@ void rewritePlayerAuthInput(PlayerAuthInputPacket& packet) {
             }
 
             packet.blockActions.push_back({PlayerActionType::CrackBlock,
-                pendingBreak->target, pendingBreak->face});
+                pendingBreak->target, static_cast<int>(pendingBreak->face)});
         }
     }
 

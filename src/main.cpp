@@ -19,8 +19,6 @@ DWORD WINAPI start(LPVOID module) {
     const std::array requiredSignatures{
         std::pair{"mce::Mesh::_renderMesh", GET_SIG("mce::Mesh::_renderMesh")},
         std::pair{"mce::RenderMaterialGroup::common", GET_SIG("mce::RenderMaterialGroup::common")},
-        std::pair{"mce::TextureGroup::uploadTexture", GET_SIG("mce::TextureGroup::uploadTexture")},
-        std::pair{"mce::LRUCache::remove", GET_SIG("mce::LRUCache::remove")},
         std::pair{"RenderContextHook::ctxSig", GET_SIG("RenderContextHook::ctxSig")},
         std::pair{"WindowProcCallbackHook::keymapSig", GET_SIG("WindowProcCallbackHook::keymapSig")},
         std::pair{"UpdateHook::updateSig", GET_SIG("UpdateHook::updateSig")},

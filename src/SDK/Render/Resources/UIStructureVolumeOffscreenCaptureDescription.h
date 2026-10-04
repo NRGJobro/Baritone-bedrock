@@ -2,6 +2,6 @@
 
 #include "OffscreenCaptureData.h"
 
-struct UIStructureVolumeCaptureDescription {
+struct UIStructureVolumeOffscreenCaptureDescription {
     OffscreenCaptureData captureData;
 };

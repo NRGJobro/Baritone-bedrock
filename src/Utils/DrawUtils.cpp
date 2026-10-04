@@ -114,10 +114,7 @@ float DrawUtils::getTextWidth(const std::string& text, const float size, const F
 }
 
 float DrawUtils::getCharWidth(const char c, const float size, const Fonts font) {
-    const auto game = MC::getMinecraftGame();
-    const auto f = game == nullptr ? nullptr : game->getFont(font);
-
-    return f == nullptr ? 0.f : f->_getCharWidth(c) * f->getScaleFactor(c) * size;
+    return getTextWidth(std::string(1, c), size, font);
 }
 
 float DrawUtils::getFontHeight(const float size, const Fonts font) {
@@ -128,47 +125,23 @@ float DrawUtils::getFontHeight(const float size, const Fonts font) {
 }
 
 void DrawUtils::drawText(const std::string& text, const glm::vec2& pos, const mce::Color& color, const float size, const Fonts font, const bool shadow) {
-    if (screenContext == nullptr)
+    if (renderCtx == nullptr)
         return;
 
     const auto game = MC::getMinecraftGame();
-    const auto instance = MC::getClientInstance();
     const auto f = game == nullptr ? nullptr : game->getFont(font);
-    if (f == nullptr || instance == nullptr)
+    if (f == nullptr)
         return;
 
-    auto& stack = instance->getCamera().worldMatrixStack;
-
-    stack.push();
-
-    auto& matrix = stack.top().matrix;
-
-    matrix = translate(matrix, {pos.x, pos.y, 0.f});
-    matrix = scale(matrix, glm::vec3{size * f->getScaleFactor()});
-
-    f->draw(screenContext, text, 0.f, 0.f, color, shadow);
-
-    stack.pop();
+    const glm::vec4 bounds{pos.x, pos.x + 1000.f, pos.y, pos.y + 1000.f};
+    const TextMeasureData measure{size, 0.f, shadow, false, false};
+    const CaretMeasureData caret{20, false};
+    renderCtx->drawText(f, bounds, text, color, color.a, 0.f, measure, caret);
 }
 
 void DrawUtils::drawTextChroma(const std::string& text, const glm::vec2& pos, const float alpha, const float size, const Fonts font, const bool shadow) {
-    if (screenContext == nullptr)
+    if (renderCtx == nullptr)
         return;
-
-    const auto game = MC::getMinecraftGame();
-    const auto instance = MC::getClientInstance();
-    const auto f = game == nullptr ? nullptr : game->getFont(font);
-    if (f == nullptr || instance == nullptr)
-        return;
-
-    auto& stack = instance->getCamera().worldMatrixStack;
-
-    stack.push();
-
-    auto& matrix = stack.top().matrix;
-
-    matrix = translate(matrix, glm::vec3{pos.x, pos.y, 0.f});
-    matrix = scale(matrix, glm::vec3{size * f->getScaleFactor()});
 
     float x = 0.f;
 
@@ -176,12 +149,10 @@ void DrawUtils::drawTextChroma(const std::string& text, const glm::vec2& pos, co
         const auto l = TimeUtils::currentTimeMillis() - (static_cast<millis>(pos.x + x) * 10 - static_cast<millis>(pos.y) * 10);
         const auto color = Utils::HSVtoRGB(static_cast<float>(l % 2000) / 2000.f, 0.8f, 0.8f);
 
-        f->draw(screenContext, std::string{c}, x, 0.f, {color, alpha}, shadow);
+        drawText(std::string(1, c), {pos.x + x, pos.y}, {color, alpha}, size, font, shadow);
 
         x += getCharWidth(c, size, font);
     }
-
-    stack.pop();
 }
 
 void DrawUtils::addFilledRectangle(const glm::vec4& pos, const mce::Color& col, const float alpha) {

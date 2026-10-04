@@ -1,8 +1,6 @@
 #pragma once
 
-#include "../Dimension.h"
 #include "../Level/Level.h"
-#include "ActorLocation.h"
 #include "Components/StateVectorComponent.h"
 #include "Components/ActorRotationComponent.h"
 #include "Components/ActorHeadRotationComponent.h"
@@ -30,10 +28,7 @@ class Actor {
 public:
     EntityContext& getEntityContext() const;
 
-    Dimension* getDimension();
     Level* getLevel();
-
-    glm::vec3 getAttachPos(ActorLocation location, float a);
     [[nodiscard]] glm::vec3 getPosition();
     [[nodiscard]] glm::vec3 getFeetPosition();
     [[nodiscard]] glm::vec2 getRotation();

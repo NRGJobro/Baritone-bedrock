@@ -2,7 +2,6 @@
 
 #include "../Memory/Sig/SignatureManager.h"
 #include "../Utils/Utils.h"
-#include "Core/MainWindow.h"
 
 static ClientInstance* clientInstance = nullptr;
 static HWND windowHandle = nullptr;

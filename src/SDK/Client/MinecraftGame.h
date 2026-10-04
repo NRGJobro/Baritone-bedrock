@@ -3,7 +3,6 @@
 #include "ClientInstance.h"
 #include "Font/FontRepository.h"
 #include "Font/Fonts.h"
-#include "MCE/TextureGroup.h"
 
 class MinecraftGame {
 public:
@@ -13,11 +12,7 @@ public:
     };
 
     ClientInstance* getClientInstance();
-    std::shared_ptr<mce::TextureGroup> getTextureGroup();
     FontRepository* getFontRepository();
-
-    void grabMouse();
-    void releaseMouse();
 
     Font* getFont(Fonts font);
 };
