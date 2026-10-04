@@ -22,13 +22,23 @@ static bool rotationSliderDragging = false;
 static bool bridgeLengthSliderDragging = false;
 
 void ClickGui::render() {
-    if (!g_Client.clickGuiOpened || DrawUtils::getTessellator() == nullptr) {
+    const auto screenContext = DrawUtils::getScreenContext();
+    const auto tessellator = DrawUtils::getTessellator();
+    const auto material = DrawUtils::getUIFillColor();
+    const auto guiData = MC::getGuiData();
+    const auto clientInstance = MC::getClientInstance();
+
+    if (!g_Client.clickGuiOpened || screenContext == nullptr || tessellator == nullptr ||
+        material == nullptr || guiData == nullptr || clientInstance == nullptr) {
         renderScrollOffset = scrollOffset;
         return;
     }
 
-    const auto& clientScreenSize = MC::getGuiData()->screenSizeData.clientScreenSize;
-    const auto& clientUIScreenSize = MC::getGuiData()->screenSizeData.clientUIScreenSize;
+    const auto& clientScreenSize = guiData->screenSizeData.clientScreenSize;
+    const auto& clientUIScreenSize = guiData->screenSizeData.clientUIScreenSize;
+    if (clientScreenSize.x <= 0.f || clientScreenSize.y <= 0.f ||
+        clientUIScreenSize.x <= 0.f || clientUIScreenSize.y <= 0.f)
+        return;
 
     POINT cursor{};
     if (GetCursorPos(&cursor) && ScreenToClient(MC::getWindowHandle(), &cursor))
@@ -61,13 +71,17 @@ void ClickGui::render() {
         builtMeshes = true;
     }
 
-    overlayMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-    shadowMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-    bgMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-    sidebarMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-    lineMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
+    auto* meshContext = screenContext->toMeshContext();
+    if (meshContext == nullptr)
+        return;
 
-    auto& stack = MC::getClientInstance()->getCamera().worldMatrixStack;
+    overlayMesh.renderMesh(meshContext, material);
+    shadowMesh.renderMesh(meshContext, material);
+    bgMesh.renderMesh(meshContext, material);
+    sidebarMesh.renderMesh(meshContext, material);
+    lineMesh.renderMesh(meshContext, material);
+
+    auto& stack = clientInstance->getCamera().worldMatrixStack;
     stack.push();
     stack.top().matrix = translate(stack.top().matrix, {guiXpos + 10.f, guiYpos + 60.f, 0.f});
     navMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
@@ -467,6 +481,8 @@ void ClickGui::onWheel(const bool direction, bool& cancel) {
 
 void ClickGui::buildMeshes() {
     const auto tess = DrawUtils::getTessellator();
+    if (tess == nullptr)
+        return;
 
     { // Dimmed backdrop. This is deliberately material-safe faux blur.
         tess->begin();

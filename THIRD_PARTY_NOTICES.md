@@ -7,4 +7,4 @@ The pathfinding architecture and goal model in `src/Baritone` are adapted for Mi
 - License: GNU Lesser General Public License version 3
 - License copy: `LICENSE-Baritone`
 
-MCRenderTests supplied the retained Bedrock SDK/runtime layout and ClickGUI rendering implementation. Borion supplied the original target repository and compatible Bedrock SDK knowledge.
+MCRenderTests supplied the retained Bedrock SDK/runtime layout and ClickGUI rendering implementation. The original upstream repository supplied compatible Bedrock SDK knowledge.

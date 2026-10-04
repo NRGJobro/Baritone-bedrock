@@ -16,10 +16,6 @@ FontRepository* MinecraftGame::getFontRepository() {
     return hat::member_at<FontRepository*>(this, 0x730);
 }
 
-ServerInstance* MinecraftGame::getServerInstance() {
-    return hat::member_at<ServerInstance*>(this, 0x10F8);
-}
-
 void MinecraftGame::grabMouse() {
     if (auto* client = getClientInstance(); client != nullptr)
         Utils::CallVFunc<310, void>(client);

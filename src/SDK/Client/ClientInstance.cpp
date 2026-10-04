@@ -22,20 +22,8 @@ mce::Camera& ClientInstance::getCamera() {
     return hat::member_at<mce::Camera>(this, 0x360);
 }
 
-glm::vec2& ClientInstance::getMousePos() {
-    return hat::member_at<glm::vec2>(this, 0x580);
-}
-
 GuiData* ClientInstance::getGuiData() {
     return hat::member_at<GuiData*>(this, 0x650);
-}
-
-Social::User* ClientInstance::getUser() {
-    return hat::member_at<Social::User*>(this, 0xBF8);
-}
-
-void* ClientInstance::getOptions() {
-    return hat::member_at<void*>(this, 0xE10);
 }
 
 
@@ -45,8 +33,4 @@ BlockSource* ClientInstance::getBlockSource() {
 
 LocalPlayer* ClientInstance::getLocalPlayer() {
     return Utils::CallVFunc<31, LocalPlayer*>(this);
-}
-
-LightTexture* ClientInstance::getLightTexture() {
-    return Utils::CallVFunc<192, LightTexture*>(this);
 }

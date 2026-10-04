@@ -3,12 +3,9 @@ setlocal
 call "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x64
 if errorlevel 1 exit /b %errorlevel%
 
-if /I "%1"=="configure" (
-    cmake -S . -B out\build\x64-Debug -DBORION_BUILD_TESTS=ON
-    if errorlevel 1 exit /b 1
-    exit /b 0
-)
-
-cmake --build out\build\x64-Debug --config Debug --parallel
+cmake --preset x64-debug
 if errorlevel 1 exit /b 1
+cmake --build --preset x64-debug
+if errorlevel 1 exit /b 1
+if /I "%1"=="test" ctest --test-dir out\build\x64-debug --output-on-failure
 exit /b 0

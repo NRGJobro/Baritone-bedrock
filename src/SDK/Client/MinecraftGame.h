@@ -4,7 +4,6 @@
 #include "Font/FontRepository.h"
 #include "Font/Fonts.h"
 #include "MCE/TextureGroup.h"
-#include "../Server/ServerInstance.h"
 
 class MinecraftGame {
 public:
@@ -16,7 +15,6 @@ public:
     ClientInstance* getClientInstance();
     std::shared_ptr<mce::TextureGroup> getTextureGroup();
     FontRepository* getFontRepository();
-    ServerInstance* getServerInstance();
 
     void grabMouse();
     void releaseMouse();

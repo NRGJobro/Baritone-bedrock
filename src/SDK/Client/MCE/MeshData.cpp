@@ -2,6 +2,7 @@
 
 mce::MeshData& mce::MeshData::operator=(const MeshData& other) {
     this->mode = other.mode;
+    this->meshNotFree = other.meshNotFree;
     this->positions = other.positions;
     /*this->normals = other.normals;
     this->tangents = other.tangents;
@@ -16,8 +17,14 @@ mce::MeshData& mce::MeshData::operator=(const MeshData& other) {
     this->textureUVs[0] = other.textureUVs[0];
 
     /*this->pbrTextureIndices = other.pbrTextureIndices;
-    this->mersList = other.mersList;*/
-    memcpy(this->fieldEnabled, other.fieldEnabled, 14);
+    this->mersList = other.mersList;
+    this->geoType = other.geoType;*/
+    this->unk1 = other.unk1;
+    this->unk2 = other.unk2;
+    this->unk3 = other.unk3;
+    this->unk4 = other.unk4;
+    this->unk5 = other.unk5;
+    memcpy(this->fieldEnabled, other.fieldEnabled, sizeof(this->fieldEnabled));
 
     return *this;
 }
@@ -40,24 +47,31 @@ void mce::MeshData::clear() {
 
     //this->pbrTextureIndices.clear();
     //this->mersList.clear();
+    //this->geoType.clear();
 
-    memset(this->fieldEnabled, 0, 14);
+    this->unk1 = 0xFF7FFFFF7F7FFFFF;
+    this->unk2 = 0x7F7FFFFF7F7FFFFF;
+    this->unk3 = 0x7F7FFFFF7F7FFFFF;
+    this->unk4 = 0xFF7FFFFFFF7FFFFF;
+    this->unk5 = 0xFF7FFFFFFF7FFFFF;
+
+    memset(this->fieldEnabled, 0, sizeof(this->fieldEnabled));
 }
 
 void mce::MeshData::enableField(VertexField vertexField) {
-    const int index = *reinterpret_cast<int*>(&vertexField) & 0xFFFF;
+    const int index = static_cast<int>(std::to_underlying(vertexField));
 
-    /*if (index < 0 || index > 14)
-        return;*/
+    if (index < 0 || index >= static_cast<int>(std::size(this->fieldEnabled)))
+        return;
 
     this->fieldEnabled[index] = true;
 }
 
 bool mce::MeshData::hasField(VertexField vertexField) const {
-    const int index = *reinterpret_cast<int*>(&vertexField);
+    const int index = static_cast<int>(std::to_underlying(vertexField));
 
-    /*if (index < 0 || index > 14)
-        return;*/
+    if (index < 0 || index >= static_cast<int>(std::size(this->fieldEnabled)))
+        return false;
 
     return this->fieldEnabled[index];
 }
