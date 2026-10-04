@@ -14,10 +14,10 @@ class GameMode {
     virtual void destructor();
 public:
     virtual bool startDestroyBlock(const glm::ivec3&, FacingID, bool&);
-    virtual bool destroyBlock(glm::ivec3*, FacingID);
+    virtual bool destroyBlock(const glm::ivec3&, FacingID);
     virtual bool continueDestroyBlock(const glm::ivec3&, FacingID, const glm::vec3&, bool&);
     virtual void stopDestroyBlock(const glm::ivec3&);
-    virtual void startBuildBlock(const glm::ivec3&, FacingID);
-    virtual bool buildBlock(glm::ivec3*, FacingID, bool isSimTick = false);
+    virtual void startBuildBlock(const glm::ivec3&, FacingID, bool auth);
+    virtual bool buildBlock(const glm::ivec3&, FacingID, bool auth = false);
     virtual void continueBuildBlock(const glm::ivec3&, FacingID);
 };

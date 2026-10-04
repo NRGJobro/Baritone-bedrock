@@ -192,7 +192,7 @@ void MapItem::updateChunkSamples(std::vector<ChunkSample>& samples, int blocksPe
 
                                         if (belowBlock == nullptr || !material->isType(MaterialType::Water) &&
                                             !material->isType(MaterialType::Plant) &&
-                                            !material->isType(MaterialType::SolidPlant)) {
+                                            !material->isType(MaterialType::ReplaceablePlant)) {
                                             underwaterBlockColor = belowBlock->getMapColor(blockSource, checkPos);
 
                                             // Calculate subchunk index and local position

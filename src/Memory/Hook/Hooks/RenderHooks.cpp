@@ -4,16 +4,7 @@
 #include "../../../Client/GUI/ClickGui.h"
 #include "../../../Client/Module/ModuleManager.h"
 #include "../../../Client/Module/Modules/BaritoneModule.h"
-#include "../../../Client/Module/Modules/FullBrightModule.h"
 #include "../../../SDK/MC.h"
-#include "../../../SDK/Client/MCE/framebuilder/BlitFlipbookTextureDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/FadeToBlackDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/FullscreenEffectDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/RenderCameraAimAssistHighlightDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/RenderFlameBillboardDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/RenderParticleDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/RenderPlayerVisionDescription.h"
-#include "../../../SDK/Client/MCE/framebuilder/RenderShadowDescription.h"
 #include "../../../SDK/Render/MinecraftUIRenderContext.h"
 #include "../../../SDK/Screen/ScreenView.h"
 #include "../../../Utils/DrawUtils.h"
@@ -24,45 +15,23 @@
 
 namespace {
 
-template <typename T>
-using FrameDescriptionRef = std::reference_wrapper<T>;
-
-using FrameDescription = std::variant<
-    FrameDescriptionRef<mce::framebuilder::RenderFlameBillboardDescription>,
-    FrameDescriptionRef<mce::framebuilder::BlitFlipbookTextureDescription>,
-    FrameDescriptionRef<mce::framebuilder::RenderParticleDescription>,
-    FrameDescriptionRef<mce::framebuilder::RenderPlayerVisionDescription>,
-    FrameDescriptionRef<mce::framebuilder::RenderShadowDescription>,
-    FrameDescriptionRef<mce::framebuilder::FadeToBlackDescription>,
-    FrameDescriptionRef<mce::framebuilder::RenderCameraAimAssistHighlightDescription>,
-    FrameDescriptionRef<mce::framebuilder::FullscreenEffectDescription>>;
-
-void BgfxFrameExtractor_insert(void* frameExtractor, const FrameDescription& description) {
-    static auto original = GET_HOOK(&BgfxFrameExtractor_insert);
-
-    const auto fullBright = g_modMgr.getModule<FullBrightModule>();
-    if (fullBright != nullptr && fullBright->isEnabled() &&
-        std::holds_alternative<FrameDescriptionRef<mce::framebuilder::RenderPlayerVisionDescription>>(description)) {
-        auto& vision = std::get<FrameDescriptionRef<mce::framebuilder::RenderPlayerVisionDescription>>(description).get();
-        vision.nightVisionEnabled = true;
-        vision.nightVisionScale = fullBright->getIntensity();
-        vision.blindnessLevel = 0.f;
-        vision.darknessLevel = 0.f;
-        vision.previousDarknessLevel = 0.f;
-    }
-
-    original(frameExtractor, description);
-}
-
 void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext* renderContext) {
     static auto original = GET_HOOK(&ScreenView_setupAndRender);
+    if (original == nullptr)
+        return;
     original(screenView, renderContext);
 
+    if (screenView == nullptr || renderContext == nullptr)
+        return;
+    const auto tree = screenView->getVisualTree();
+    const auto root = tree == nullptr ? nullptr : tree->getRootControl();
+    if (root == nullptr)
+        return;
+
     static std::string currentScreen;
-    const auto& name = screenView->getVisualTree()->getRootControl()->getName();
+    const auto& name = root->getName();
     if (name != "debug_screen" && name != "toast_screen" && name != "modal_progress_screen")
         currentScreen = name;
-
     if (name != "debug_screen")
         return;
 
@@ -76,7 +45,6 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
 
     if (currentScreen == "hud_screen") {
         ClickGui::render();
-
         const auto module = g_modMgr.getModule<BaritoneModule>();
         if (module != nullptr && module->isEnabled() && !g_Client.clickGuiOpened) {
             const auto status = "Limiter: " + module->getController().getStatusLine();
@@ -87,21 +55,28 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
     }
 }
 
-void LevelRenderer_renderLevel(LevelRenderer* renderer, ScreenContext* screenContext, void* frame) {
+__int64 LevelRenderer_renderLevel(LevelRenderer* renderer, ScreenContext* screenContext, const __int64 frame) {
     static auto original = GET_HOOK(&LevelRenderer_renderLevel);
+    if (original == nullptr)
+        return 0;
+
     g_modMgr.onBeforeRenderLevel();
-    original(renderer, screenContext, frame);
+    const auto result = original(renderer, screenContext, frame);
     g_modMgr.onAfterRenderLevel();
-    DrawUtils::update(screenContext);
-    LimiterTess::setTessellator3D(screenContext);
-    g_modMgr.onRenderLevel();
-    LimiterTess::setTessellator3D(nullptr);
+    if (screenContext != nullptr) {
+        DrawUtils::update(screenContext);
+        LimiterTess::setTessellator3D(screenContext);
+        g_modMgr.onRenderLevel();
+        LimiterTess::setTessellator3D(nullptr);
+    }
+    return result;
 }
 
 } // namespace
 
 void RenderHooks::init() {
-    ADD_HOOK("mce::framebuilder::bgfxbridge::BgfxFrameExtractor::insert", &BgfxFrameExtractor_insert);
-    ADD_HOOK2(ScreenView_setupAndRender, Utils::getFromOffset<uintptr_t>(GET_SIG("ScreenView::setupAndRender"), 1));
-    ADD_HOOK2(LevelRenderer_renderLevel, Utils::getFromOffset<uintptr_t>(GET_SIG("LevelRenderer::renderLevel"), 1));
+    ADD_HOOK2(ScreenView_setupAndRender,
+        Utils::getFromOffset<uintptr_t>(GET_SIG("RenderContextHook::ctxSig"), 1));
+    ADD_HOOK2(LevelRenderer_renderLevel,
+        Utils::getFromOffset<uintptr_t>(GET_SIG("LevelRendererHook::levelRendererHookSig"), 1));
 }

@@ -8,9 +8,14 @@
 
 class MinecraftGame {
 public:
+    struct CIHolder {
+        void* opaque;
+        std::shared_ptr<ClientInstance> clientInstance;
+    };
+
     ClientInstance* getClientInstance();
     std::shared_ptr<mce::TextureGroup> getTextureGroup();
-    std::shared_ptr<FontRepository> getFontRepository();
+    FontRepository* getFontRepository();
     ServerInstance* getServerInstance();
 
     void grabMouse();

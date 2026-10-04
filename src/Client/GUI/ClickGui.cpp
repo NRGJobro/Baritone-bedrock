@@ -30,7 +30,9 @@ void ClickGui::render() {
     const auto& clientScreenSize = MC::getGuiData()->screenSizeData.clientScreenSize;
     const auto& clientUIScreenSize = MC::getGuiData()->screenSizeData.clientUIScreenSize;
 
-    mousePos = MC::getClientInstance()->getMousePos();
+    POINT cursor{};
+    if (GetCursorPos(&cursor) && ScreenToClient(MC::getWindowHandle(), &cursor))
+        mousePos = {static_cast<float>(cursor.x), static_cast<float>(cursor.y)};
     mousePos /= clientScreenSize;
     mousePos *= clientUIScreenSize;
 

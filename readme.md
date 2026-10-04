@@ -1,4 +1,4 @@
-# Borion Baritone
+# Limiter
 
 A Minecraft Bedrock port of Baritone built on the Borion/MCRenderTests SDK surface. The old Borion combat, exploit, movement, and utility feature set has been removed so the client can focus on autonomous navigation and world processes. The only ClickGUI card is Limiter.
 
@@ -29,7 +29,7 @@ The first process layer now ports mining, loaded-world exploration, and session 
 
 ## Build
 
-Configure with CMake 4.x and MSVC for x64, then build the `Borion` target. `BaritoneCoreTests` is enabled by default and tests the platform-neutral pathfinder without Minecraft.
+Configure with CMake 4.x and MSVC for x64, then build the `Borion` target; the output is `Limiter.dll`. `BaritoneCoreTests` tests the platform-neutral pathfinder without Minecraft.
 
 ## Licensing
 

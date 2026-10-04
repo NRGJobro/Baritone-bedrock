@@ -25,11 +25,6 @@ BlockState BedrockWorld::getBlock(const BlockPos& pos) const {
     if (material == nullptr)
         return {.loaded = false};
 
-    // ChunkSource::getChunkStorage is intentionally not used here. Its offset is
-    // unreliable on multiplayer clients and made every block look unloaded.
-    if (material->type == MaterialType::ClientRequestPlaceholder)
-        return {.loaded = false};
-
     if (legacy->getBlockId() == 0 || material->type == MaterialType::Air)
         return {.loaded = true};
 
@@ -43,7 +38,7 @@ BlockState BedrockWorld::getBlock(const BlockPos& pos) const {
         blockName == "cactus" || blockName == "fire" || blockName == "soul_fire" ||
         blockName == "campfire" || blockName == "soul_campfire" ||
         blockName == "magma_block" || blockName == "pointed_dripstone";
-    const bool hazard = material->superHot || material->type == MaterialType::Lava ||
+    const bool hazard = material->type == MaterialType::Lava ||
         material->type == MaterialType::Fire || material->type == MaterialType::Cactus ||
         material->type == MaterialType::PowderSnow || nameHazard;
 
@@ -62,7 +57,8 @@ BlockState BedrockWorld::getBlock(const BlockPos& pos) const {
     const bool movementTrap = blockName == "web" || blockName == "cobweb";
     const bool passableVegetation = !hazard && !movementTrap && !treeLeaves &&
         (groundLeafLitter || material->type == MaterialType::Plant ||
-            material->type == MaterialType::NonSolid);
+            material->type == MaterialType::ReplaceablePlant ||
+            material->type == MaterialType::Decoration);
     // Legacy numeric IDs beyond air are not stable across Bedrock versions.
     // Treating IDs 210/217/416 as special caused ordinary deepslate-era blocks
     // to invalidate mining routes immediately after a neighbor was removed.
@@ -74,17 +70,18 @@ BlockState BedrockWorld::getBlock(const BlockPos& pos) const {
     // Bedrock's legacy ID 7 is stable and provides a defensive fallback when a
     // server/resource pack exposes an unexpected name.
     const bool unbreakable = legacy->getBlockId() == 7 || unbreakableByName ||
-        material->type == MaterialType::Barrier ||
-        material->type == MaterialType::StructureVoid;
-    const bool reportedSolid = legacy->isSolid() || material->solid || material->blocksMotion;
+        material->type == MaterialType::Barrier || material->type == MaterialType::Allow ||
+        material->type == MaterialType::Deny;
+    const bool reportedSolid = legacy->isSolid();
     const bool solid = treeLeaves || movementTrap || (reportedSolid && !passableVegetation);
+    const bool liquid = material->type == MaterialType::Water || material->type == MaterialType::Lava;
 
     return {
         .loaded = true,
         .solid = solid,
-        .liquid = material->liquid,
+        .liquid = liquid,
         .hazard = hazard,
-        .breakable = solid && !unbreakable && !material->liquid && !hazard
+        .breakable = solid && !unbreakable && !liquid && !hazard
     };
 }
 

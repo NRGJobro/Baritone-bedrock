@@ -15,9 +15,40 @@ DWORD WINAPI start(LPVOID module) {
     MH_Initialize();
     SigInit::addSigs();
     sigMgr.scanAll();
-    MC::init();
 
-    SetWindowTextA(MC::getWindowHandle(), "Limiter - Minecraft");
+    const std::array requiredSignatures{
+        std::pair{"mce::Mesh::_renderMesh", GET_SIG("mce::Mesh::_renderMesh")},
+        std::pair{"mce::RenderMaterialGroup::common", GET_SIG("mce::RenderMaterialGroup::common")},
+        std::pair{"mce::TextureGroup::uploadTexture", GET_SIG("mce::TextureGroup::uploadTexture")},
+        std::pair{"mce::LRUCache::remove", GET_SIG("mce::LRUCache::remove")},
+        std::pair{"RenderContextHook::ctxSig", GET_SIG("RenderContextHook::ctxSig")},
+        std::pair{"WindowProcCallbackHook::keymapSig", GET_SIG("WindowProcCallbackHook::keymapSig")},
+        std::pair{"UpdateHook::updateSig", GET_SIG("UpdateHook::updateSig")},
+        std::pair{"LevelRendererHook::levelRendererHookSig", GET_SIG("LevelRendererHook::levelRendererHookSig")},
+        std::pair{"GammaHook::gammaSig", GET_SIG("GammaHook::gammaSig")},
+        std::pair{"Platform_GameCore::instanceReference", GET_SIG("Platform_GameCore::instanceReference")},
+        std::pair{"GuiData::displayClientMessage", GET_SIG("GuiData::displayClientMessage")},
+        std::pair{"MinecraftPackets::createPacket", GET_SIG("MinecraftPackets::createPacket")},
+    };
+    for (const auto& [name, address] : requiredSignatures) {
+        if (address == 0) {
+            logF("Limiter startup aborted: required signature '{}' was not found", name);
+            MH_Uninitialize();
+            FreeLibraryAndExitThread(static_cast<HMODULE>(module), 1);
+        }
+    }
+
+    while (g_Client.running && (MC::getClientInstance() == nullptr || MC::getWindowHandle() == nullptr)) {
+        MC::init();
+        Sleep(25);
+    }
+    if (!g_Client.running) {
+        MH_Uninitialize();
+        FreeLibraryAndExitThread(static_cast<HMODULE>(module), 0);
+    }
+
+    if (IsWindow(MC::getWindowHandle()))
+        SetWindowTextA(MC::getWindowHandle(), "Limiter - Minecraft");
 
     g_modMgr.init();
     HookManager::initializeHooks();
@@ -32,7 +63,8 @@ DWORD WINAPI start(LPVOID module) {
     HookManager::destroy();
     MH_Uninitialize();
 
-    SetWindowTextA(MC::getWindowHandle(), "Minecraft");
+    if (IsWindow(MC::getWindowHandle()))
+        SetWindowTextA(MC::getWindowHandle(), "Minecraft");
     FreeLibraryAndExitThread(static_cast<HMODULE>(module), 0);
 }
 

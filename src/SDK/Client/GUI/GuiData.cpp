@@ -6,11 +6,11 @@ void GuiData::displayClientMessage(const std::string& message) {
     if (message.empty() || message.size() > 0x1000)
         return;
 
-    using displayClientMessage = void(__fastcall*)(GuiData*, const std::string&, std::optional<std::string>, bool);
+    using displayClientMessage = void(__fastcall*)(GuiData*, const std::string&, void*, bool);
     static auto displayMessageFunc = reinterpret_cast<displayClientMessage>(GET_SIG("GuiData::displayClientMessage"));
 
     if (displayMessageFunc != nullptr)
-        displayMessageFunc(this, message, {}, false);
+        displayMessageFunc(this, message, nullptr, false);
 }
 
 bool GuiData::isHudElementVisible(const HudElement element) const {

@@ -3,15 +3,17 @@
 #include "../../Utils/Utils.h"
 
 ClientInstance* MinecraftGame::getClientInstance() {
-    return hat::member_at<std::map<uint8_t, std::shared_ptr<ClientInstance>>>(this, 0xA08)[0].get();
+    auto& instances = hat::member_at<std::map<uint8_t, CIHolder>>(this, 0x970);
+    const auto primary = instances.find(0);
+    return primary == instances.end() ? nullptr : primary->second.clientInstance.get();
 }
 
 std::shared_ptr<mce::TextureGroup> MinecraftGame::getTextureGroup() {
-    return hat::member_at<std::shared_ptr<mce::TextureGroup>>(this, 0x7A0);
+    return hat::member_at<std::shared_ptr<mce::TextureGroup>>(this, 0x6B0);
 }
 
-std::shared_ptr<FontRepository> MinecraftGame::getFontRepository() {
-    return hat::member_at<std::shared_ptr<FontRepository>>(this, 0x1B0);
+FontRepository* MinecraftGame::getFontRepository() {
+    return hat::member_at<FontRepository*>(this, 0x730);
 }
 
 ServerInstance* MinecraftGame::getServerInstance() {
@@ -19,22 +21,30 @@ ServerInstance* MinecraftGame::getServerInstance() {
 }
 
 void MinecraftGame::grabMouse() {
-    Utils::CallVFunc<144, void>(this);
+    if (auto* client = getClientInstance(); client != nullptr)
+        Utils::CallVFunc<310, void>(client);
 }
 
 void MinecraftGame::releaseMouse() {
-    Utils::CallVFunc<145, void>(this);
+    if (auto* client = getClientInstance(); client != nullptr)
+        Utils::CallVFunc<311, void>(client);
 }
 
 Font* MinecraftGame::getFont(const Fonts font) {
     static bool hasCachedAllFonts = false;
     static std::unordered_map<Fonts, Font*> cachedFonts;
     const auto repo = this->getFontRepository();
+    if (repo == nullptr || repo->loadedFonts.empty())
+        return nullptr;
 
     if (!hasCachedAllFonts) {
         magic_enum::enum_for_each<Fonts>([&](auto loopedFont) {
             Fonts currentFont = loopedFont;
-            cachedFonts.emplace(currentFont, repo->loadedFonts.at(repo->getFontIdentifier(std::string(magic_enum::enum_name(currentFont)))).get());
+            const auto name = std::string(magic_enum::enum_name(currentFont));
+            const auto identifier = repo->fontNameToIdentifier.find(name);
+            const auto index = identifier == repo->fontNameToIdentifier.end() ? 0 : identifier->second;
+            cachedFonts.emplace(currentFont,
+                repo->loadedFonts.at(std::min<std::size_t>(index, repo->loadedFonts.size() - 1)).get());
         });
         hasCachedAllFonts = true;
     }

@@ -8,10 +8,23 @@ static ClientInstance* clientInstance = nullptr;
 static HWND windowHandle = nullptr;
 
 void MC::init() {
-    const auto platform = hat::member_at<MainWindow*>(*Utils::getFromOffset<void**>(GET_SIG("mMainWindow"), 3), 0x8);
+    // 1.26.52 no longer exposes the old mMainWindow chain. The current
+    // Platform_GameCore reference owns both the HWND and MinecraftGame.
+    const auto referenceAddress = Utils::getFromOffset<void**>(
+        GET_SIG("Platform_GameCore::instanceReference"), 3);
+    if (referenceAddress == nullptr || *referenceAddress == nullptr)
+        return;
 
-    clientInstance = platform->getMinecraftGame()->getClientInstance();
-    windowHandle = platform->getHIDController()->getWindowHandle();
+    const auto reference = *referenceAddress;
+    const auto platform = hat::member_at<void*>(reference, 0x8);
+    if (platform == nullptr)
+        return;
+
+    windowHandle = hat::member_at<HWND>(platform, 0x80);
+    const auto holder = hat::member_at<void*>(platform, 0x20);
+    const auto game = holder == nullptr ? nullptr : hat::member_at<MinecraftGame*>(holder, 0x48);
+    if (game != nullptr)
+        clientInstance = game->getClientInstance();
 }
 
 HWND MC::getWindowHandle() {

@@ -65,7 +65,8 @@ bool liquidAt(BlockSource* source, const glm::ivec3& pos) {
     auto* block = source->getBlock(pos);
     auto* legacy = block != nullptr ? block->getBlockLegacy() : nullptr;
     auto* material = legacy != nullptr ? legacy->getMaterial() : nullptr;
-    return material != nullptr && material->liquid;
+    return material != nullptr &&
+        (material->type == MaterialType::Water || material->type == MaterialType::Lava);
 }
 
 FacingID facingFromPlayer(const glm::vec3& player, const BlockPos& block) {
@@ -1528,7 +1529,7 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
     int blockSlot = -1;
     for (int slot = 0; slot < 9; ++slot) {
         auto* stack = supplies->getInventory()->getItem(slot);
-        if (stack != nullptr && stack->isValid() && stack->getItem() != nullptr && stack->getItem()->isBlock()) {
+        if (stack != nullptr && stack->isValid() && stack->getItem() != nullptr && stack->isBlockType()) {
             blockSlot = slot;
             break;
         }
@@ -1551,14 +1552,14 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
         auto* block = source->getBlock(support);
         if (block == nullptr || block->getBlockLegacy() == nullptr || !block->getBlockLegacy()->isSolid()) continue;
         auto place = pos;
-        if (player->getGameMode()->buildBlock(&place, static_cast<FacingID>(face), false)) {
+        if (player->getGameMode()->buildBlock(place, static_cast<FacingID>(face), false)) {
             restoreSlot();
             return true;
         }
     }
     if (preferredFace != FacingID::Unknown) {
         auto place = pos;
-        if (player->getGameMode()->buildBlock(&place, preferredFace, false)) {
+        if (player->getGameMode()->buildBlock(place, preferredFace, false)) {
             restoreSlot();
             return true;
         }

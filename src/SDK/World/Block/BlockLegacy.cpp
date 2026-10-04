@@ -4,18 +4,16 @@
 #include "Material/Material.h"
 
 int16_t BlockLegacy::getBlockId() {
-    return hat::member_at<int16_t>(this, 0x1AA);
+    return hat::member_at<int16_t>(this, 0x17E);
 }
 
 const std::string& BlockLegacy::getName() const {
-    // Same-version Borion NameInfo layout: the first HashedString begins at
-    // 0x78. Keeping this accessor here avoids duplicating SDK offsets in the
-    // higher-level mining process.
-    return hat::member_at<const HashedString>(this, 0x78).getString();
+    return hat::member_at<const std::string>(this, 0x98);
 }
 
 bool BlockLegacy::isSolid() {
-    return hat::member_at<bool>(this, 0x17C);
+    // mSolid is bit 1 of the second packed flag byte in the current layout.
+    return (hat::member_at<uint8_t>(this, 0x164) & 0x2) != 0;
 }
 
 mce::Color BlockLegacy::getMapColor(BlockSource* source, glm::ivec3 pos, Block* block) { // +3 (sig inside of MapItem::sampleMapData): 48 8B ? ? ? ? ? FF 15 ? ? ? ? 0F 10 ? ? E9
@@ -24,7 +22,7 @@ mce::Color BlockLegacy::getMapColor(BlockSource* source, glm::ivec3 pos, Block* 
 }
 
 Material* BlockLegacy::getMaterial() {
-    return hat::member_at<Material*>(this, 0x140); // +3 (in MapItem::sampleMapData): 48 8B ? ? ? ? ? 44 8B ? ? ? 83 38
+    return hat::member_at<Material*>(this, 0x28);
 }
 
 const AABB& BlockLegacy::getVisualShape(Block* block, AABB& buffer) {

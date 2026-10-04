@@ -36,7 +36,8 @@ void Font::draw(ScreenContext* screenContext, const std::string& text, const flo
 }
 
 void Font::drawShadow(ScreenContext* screenContext, const std::string_view& text, float x, float y, const mce::Color& color, bool drawColorSymbol, mce::MaterialPtr* optMaterial, float linePadding) {
-    static auto sig = Utils::getFromOffset<uintptr_t>(GET_SIG("Font::drawShadow"), 1);
-    static auto func = *(decltype(&Font::drawShadow)*)&sig;
-    (this->*func)(screenContext, text, x, y, color, drawColorSymbol, optMaterial, linePadding);
+    // The standalone helper was inlined in 1.26.52. Slot 4 is the stable
+    // drawCached entry and accepts the shadow request explicitly.
+    this->drawCached(screenContext, text, x, y, color, false, false,
+        drawColorSymbol, optMaterial, -1, true, linePadding);
 }

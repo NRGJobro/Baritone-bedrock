@@ -3,23 +3,23 @@
 #include "../../Utils/Utils.h"
 
 MinecraftGame* ClientInstance::getMinecraftGame() {
-    return hat::member_at<MinecraftGame*>(this, 0x1A0);
+    return hat::member_at<MinecraftGame*>(this, 0x1A8);
 }
 
 Minecraft* ClientInstance::getMinecraft() {
-    return hat::member_at<Minecraft*>(this, 0x1A8);
+    return hat::member_at<Minecraft*>(this, 0x1B0);
 }
 
 LevelRenderer* ClientInstance::getLevelRenderer() {
-    return hat::member_at<LevelRenderer*>(this, 0x1B8);
+    return hat::member_at<LevelRenderer*>(this, 0x1C0);
 }
 
 LoopbackPacketSender* ClientInstance::getPacketSender() {
-    return hat::member_at<LoopbackPacketSender*>(this, 0x1C8);
+    return hat::member_at<LoopbackPacketSender*>(this, 0x1D0);
 }
 
 mce::Camera& ClientInstance::getCamera() {
-    return hat::member_at<mce::Camera>(this, 0x358);
+    return hat::member_at<mce::Camera>(this, 0x360);
 }
 
 glm::vec2& ClientInstance::getMousePos() {
@@ -27,7 +27,7 @@ glm::vec2& ClientInstance::getMousePos() {
 }
 
 GuiData* ClientInstance::getGuiData() {
-    return hat::member_at<GuiData*>(this, 0x648);
+    return hat::member_at<GuiData*>(this, 0x650);
 }
 
 Social::User* ClientInstance::getUser() {
@@ -35,7 +35,7 @@ Social::User* ClientInstance::getUser() {
 }
 
 void* ClientInstance::getOptions() {
-    return this->getUser()->getOptions();
+    return hat::member_at<void*>(this, 0xE10);
 }
 
 

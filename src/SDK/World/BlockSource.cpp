@@ -15,9 +15,9 @@ bool BlockSource::DefaultBlockScan::checkBlock(BlockSource* region, Block* block
 
     const auto material = blockLegacy->getMaterial();
 
-    if (material->type == MaterialType::Leaves || material->type == MaterialType::Plant || material->type == MaterialType::SolidPlant || material->type == MaterialType::Fire ||
+    if (material->type == MaterialType::Leaves || material->type == MaterialType::Plant || material->type == MaterialType::ReplaceablePlant || material->type == MaterialType::Fire ||
         material->type == MaterialType::Glass || material->type == MaterialType::Portal || material->type == MaterialType::Bubble || material->type == MaterialType::Barrier ||
-        material->type == MaterialType::DecorationSolid || material->type == MaterialType::NonSolid || !material->solid)
+        material->type == MaterialType::Decoration || !blockLegacy->isSolid())
         return false;
 
     if (blockLegacy->isMultifaceBlock())

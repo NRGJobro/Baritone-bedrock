@@ -27,4 +27,6 @@ public:
     void* frameAllocator;
 
     MeshContext* toMeshContext();
+    Tessellator* getTessellator() { return hat::member_at<Tessellator*>(this, 0xB8); }
+    ShaderColor* getShaderColor() { return hat::member_at<ShaderColor*>(toMeshContext(), 0x20); }
 };

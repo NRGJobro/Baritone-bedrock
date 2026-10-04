@@ -27,7 +27,7 @@ bool Dimension::hasCeiling() {
 }
 
 ChunkSource* Dimension::getChunkSource() { // +3 : 48 8b a8 ? ? ? ? 80 be
-    return hat::member_at<ChunkSource*>(this, 0x1B8);
+    return hat::member_at<ChunkSource*>(this, 0x1D8);
 }
 
 float Dimension::getTimeOfDay(const int ticks, const float a) {

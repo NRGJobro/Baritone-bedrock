@@ -20,14 +20,18 @@ static ScreenContext* screenContext;
 static Tessellator* tessellator;
 
 void DrawUtils::updateMCUIRC(MinecraftUIRenderContext* ctx) {
+    if (ctx == nullptr)
+        return;
     renderCtx = ctx;
 
     update(ctx->screenContext);
 }
 
 void DrawUtils::update(ScreenContext* ctx) {
+    if (ctx == nullptr)
+        return;
     screenContext = ctx;
-    tessellator = ctx->tessellator;
+    tessellator = ctx->getTessellator();
 
     if (uiFillColor == nullptr)
         uiFillColor = mce::MaterialPtr::createMaterial("ui_fill_color");
@@ -91,7 +95,9 @@ void DrawUtils::setShaderColor(const float r, const float g, const float b, cons
     if (screenContext == nullptr)
         return;
 
-    const auto shaderColor = screenContext->currentShaderColor;
+    const auto shaderColor = screenContext->getShaderColor();
+    if (shaderColor == nullptr)
+        return;
 
     shaderColor->color.r = r;
     shaderColor->color.g = g;
@@ -101,30 +107,37 @@ void DrawUtils::setShaderColor(const float r, const float g, const float b, cons
 }
 
 float DrawUtils::getTextWidth(const std::string& text, const float size, const Fonts font) {
-    const auto f = MC::getMinecraftGame()->getFont(font);
+    const auto game = MC::getMinecraftGame();
+    const auto f = game == nullptr ? nullptr : game->getFont(font);
 
-    return f->getLineLength(text, size);
+    return f == nullptr ? 0.f : f->getLineLength(text, size);
 }
 
 float DrawUtils::getCharWidth(const char c, const float size, const Fonts font) {
-    const auto f = MC::getMinecraftGame()->getFont(font);
+    const auto game = MC::getMinecraftGame();
+    const auto f = game == nullptr ? nullptr : game->getFont(font);
 
-    return f->_getCharWidth(c) * f->getScaleFactor(c) * size;
+    return f == nullptr ? 0.f : f->_getCharWidth(c) * f->getScaleFactor(c) * size;
 }
 
 float DrawUtils::getFontHeight(const float size, const Fonts font) {
-    const auto f = MC::getMinecraftGame()->getFont(font);
+    const auto game = MC::getMinecraftGame();
+    const auto f = game == nullptr ? nullptr : game->getFont(font);
 
-    return f->getLineHeight() * size;
+    return f == nullptr ? 0.f : f->getLineHeight() * size;
 }
 
 void DrawUtils::drawText(const std::string& text, const glm::vec2& pos, const mce::Color& color, const float size, const Fonts font, const bool shadow) {
     if (screenContext == nullptr)
         return;
 
-    const auto f = MC::getMinecraftGame()->getFont(font);
+    const auto game = MC::getMinecraftGame();
+    const auto instance = MC::getClientInstance();
+    const auto f = game == nullptr ? nullptr : game->getFont(font);
+    if (f == nullptr || instance == nullptr)
+        return;
 
-    auto& stack = MC::getClientInstance()->getCamera().worldMatrixStack;
+    auto& stack = instance->getCamera().worldMatrixStack;
 
     stack.push();
 
@@ -142,9 +155,13 @@ void DrawUtils::drawTextChroma(const std::string& text, const glm::vec2& pos, co
     if (screenContext == nullptr)
         return;
 
-    const auto f = MC::getMinecraftGame()->getFont(font);
+    const auto game = MC::getMinecraftGame();
+    const auto instance = MC::getClientInstance();
+    const auto f = game == nullptr ? nullptr : game->getFont(font);
+    if (f == nullptr || instance == nullptr)
+        return;
 
-    auto& stack = MC::getClientInstance()->getCamera().worldMatrixStack;
+    auto& stack = instance->getCamera().worldMatrixStack;
 
     stack.push();
 

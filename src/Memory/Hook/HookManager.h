@@ -19,7 +19,8 @@ public:
 
     template<auto callback>
     static auto getReturn() {
-        return reinterpret_cast<decltype(callback)>(getHook(*callback)->original);
+        const auto hook = getHook(*callback);
+        return hook == nullptr ? nullptr : reinterpret_cast<decltype(callback)>(hook->original);
     }
 
     static void destroy();

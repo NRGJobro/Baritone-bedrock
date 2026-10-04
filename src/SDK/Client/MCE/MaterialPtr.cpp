@@ -10,5 +10,9 @@ mce::MaterialPtr* mce::MaterialPtr::createMaterial(const HashedString& name) {
     if (materialCreator == nullptr)
         materialCreator = Utils::getFromOffset<RenderMaterialGroup*>(GET_SIG("mce::RenderMaterialGroup::common"), 3);
 
-    return Utils::CallVFunc<1, MaterialPtr*>(materialCreator, name);
+    if (materialCreator == nullptr)
+        return nullptr;
+
+    return Utils::CallVFunc<1, std::shared_ptr<MaterialPtr>, const HashedString&>(
+        materialCreator, name).get();
 }

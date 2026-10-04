@@ -2,33 +2,12 @@
 
 #include <cstdint>
 
-// Bedrock stores MaterialType as a 32-bit value. Using an 8-bit underlying
-// type shifts every bool in Material and makes ordinary floors look non-solid.
 enum class MaterialType : std::uint32_t {
-    Air,
-    Dirt,
-    Wood,
-    Metal,
-    Grate,
-    Water,
-    Lava,
-    Leaves,
-    Plant,
-    SolidPlant,
-    Fire,
-    Glass,
-    Explosive,
-    Ice,
-    PowderSnow,
-    Cactus,
-    Portal,
-    StoneDecoration,
-    Bubble,
-    Barrier,
-    DecorationSolid,
-    ClientRequestPlaceholder,
-    StructureVoid,
-    Solid,
-    NonSolid,
-    Any
+    Air, Dirt, Wood, Stone, Metal, Water, Lava, Leaves, Plant,
+    ReplaceablePlant, Sponge, Cloth, Bed, Fire, Sand, Decoration,
+    Glass, Explosive, Ice, PackedIce, TopSnow, Snow, PowderSnow, Unknown23,
+    Cactus, Clay, Vegetable, Portal, Cake, Web, RedstoneWire, Carpet,
+    BuildableGlass, Slime, Piston, Allow, Deny, Netherwart,
+    StoneDecoration, Bubble, Egg, Barrier, DecorationFlammable,
+    SurfaceTypeTotal, Any
 };

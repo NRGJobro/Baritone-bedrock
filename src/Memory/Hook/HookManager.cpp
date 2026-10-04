@@ -15,6 +15,10 @@ Hook* HookManager::getHook(void* func) {
 }
 
 void HookManager::addHook(const uintptr_t& sig, void* c) {
+    if (sig == 0 || c == nullptr) {
+        logF("Refusing to create a hook with a null target/callback");
+        return;
+    }
     auto hook = std::make_unique<Hook>(sig, c);
     hooks.emplace(c, std::move(hook));
 }

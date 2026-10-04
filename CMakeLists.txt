@@ -8,6 +8,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 if(MSVC)
     add_compile_options(/MP)
+    add_link_options(/MAP:${CMAKE_BINARY_DIR}/Limiter.map /MAPINFO:EXPORTS)
 endif()
 
 option(BORION_BUILD_TESTS "Build pathfinder regression tests" OFF)
@@ -34,6 +35,7 @@ include(include/FetchLibraries.cmake)
 file(GLOB_RECURSE CLIENT_SOURCES CONFIGURE_DEPENDS "src/*.cpp" "src/*.h")
 
 add_library(Borion SHARED ${CLIENT_SOURCES})
+set_target_properties(Borion PROPERTIES OUTPUT_NAME Limiter)
 target_link_libraries(Borion PRIVATE minhook libhat EnTT::EnTT magic_enum spdlog::spdlog glm dwmapi.lib)
 target_precompile_headers(Borion PRIVATE "PCH.cpp")
 

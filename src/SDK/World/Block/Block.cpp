@@ -5,7 +5,7 @@
 #include "../Biome/biome_color_sampling/BiomeColorSampling.h"
 
 BlockLegacy* Block::getBlockLegacy() {
-    return hat::member_at<BlockLegacy*>(this, 0x58); // +3 1 byte, sig inside (MapItem::sampleMapData): 48 8B ? ? 48 85 ? 0F 84 ? ? ? ? 48 8B ? 48 89 ? ? ? 4C 8D ? ? ? ? ? 4D 8B ? 48 8D ? ? 48 8B ? ? ? ? ? FF 15 ? ? ? ? EB
+    return hat::member_at<BlockLegacy*>(this, 0x68);
 }
 
 uint8_t Block::getLightEmission() {

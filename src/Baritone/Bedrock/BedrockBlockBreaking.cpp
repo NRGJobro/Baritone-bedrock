@@ -156,7 +156,7 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
             playerPosition, destroyed);
         if (!destroyed) {
             auto commitTarget = pendingBreak->target;
-            gameMode->destroyBlock(&commitTarget, pendingBreak->face);
+            gameMode->destroyBlock(commitTarget, pendingBreak->face);
         }
         if (hitWrapper != nullptr && savedHit)
             hitWrapper->hitResult = *savedHit;
