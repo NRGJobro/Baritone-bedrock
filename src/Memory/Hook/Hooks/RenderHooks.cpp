@@ -55,7 +55,8 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
         // batch explicitly just as Phase does for custom HUD text.
         renderContext->flushText();
     } else {
-        g_Client.clickGuiOpened = false;
+        if (g_Client.clickGuiOpened)
+            ClickGui::setOpen(false);
     }
 }
 

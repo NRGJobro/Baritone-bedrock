@@ -53,6 +53,41 @@ bool parseToggle(const std::string& value, bool& result) {
     return false;
 }
 
+bool copyToClipboard(const std::string& text) {
+    if (!OpenClipboard(MC::getWindowHandle()))
+        return false;
+
+    if (!EmptyClipboard()) {
+        CloseClipboard();
+        return false;
+    }
+
+    const auto byteCount = text.size() + 1;
+    const auto memory = GlobalAlloc(GMEM_MOVEABLE, byteCount);
+    if (memory == nullptr) {
+        CloseClipboard();
+        return false;
+    }
+
+    void* destination = GlobalLock(memory);
+    if (destination == nullptr) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+
+    std::memcpy(destination, text.c_str(), byteCount);
+    GlobalUnlock(memory);
+    if (SetClipboardData(CF_TEXT, memory) == nullptr) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+
+    CloseClipboard();
+    return true;
+}
+
 baritone::BlockPos getPlayerBlock() {
     const auto player = MC::getLocalPlayer();
     if (player == nullptr)
@@ -168,7 +203,7 @@ bool BaritoneModule::handleChat(const std::string& message) {
         "status", "eta", "water", "fall", "parkour", "bridge", "set", "y", "xz",
         "near", "interact", "twoblocks", "axis", "highway", "thisway", "forward",
         "away", "surface", "top", "mine", "tunnel", "explore", "waypoint", "wp",
-        "fly"
+        "fly", "pos"
     };
     if (directDotCommand && !commands.contains(command)) return false;
 
@@ -187,6 +222,7 @@ bool BaritoneModule::handleChat(const std::string& message) {
         reply("WAYPOINTS: .wp save/goto/delete/list <name>");
         reply("ELYTRA: .fly x y z | .fly stop | .fly rockets ticks");
         reply("CONTROL: .path | .stop | .pause | .resume | .status | .eta");
+        reply("UTILITY: .pos (copy your coordinates)");
         reply("POLICY: .set name value | .water | .fall | .parkour | .bridge");
         return true;
     }
@@ -210,6 +246,21 @@ bool BaritoneModule::handleChat(const std::string& message) {
         const double ticks = controller.getEstimatedTicksToGoal();
         if (ticks <= 0.0) reply("No active path ETA is available.");
         else reply(std::format("Estimated remaining: {:.1f}s ({:.0f} ticks).", ticks / 20.0, ticks));
+        return true;
+    }
+    if (command == "pos") {
+        const auto player = MC::getLocalPlayer();
+        if (player == nullptr) {
+            reply("Join a world before copying your position.");
+            return true;
+        }
+
+        const auto position = player->getFeetPosition();
+        const auto coordinates = std::format("{:.3f} {:.3f} {:.3f}", position.x, position.y, position.z);
+        if (copyToClipboard(coordinates))
+            reply("Copied position: " + coordinates);
+        else
+            reply("Position: " + coordinates + " (clipboard unavailable)");
         return true;
     }
     if (command == "path") {

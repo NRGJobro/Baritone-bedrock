@@ -118,13 +118,7 @@ void Keyboard_feed(const uint8_t keyCode, const bool down) {
         g_Client.running = false;
 
     if (keyCode == VK_TAB && down && MC::getLocalPlayer() != nullptr) {
-        g_Client.clickGuiOpened = !g_Client.clickGuiOpened;
-        if (auto* client = MC::getClientInstance(); client != nullptr) {
-            if (g_Client.clickGuiOpened)
-                client->releaseMouse();
-            else
-                client->grabMouse();
-        }
+        ClickGui::setOpen(!g_Client.clickGuiOpened);
         g_Client.blockedKeys[VK_TAB] = true;
         return;
     }

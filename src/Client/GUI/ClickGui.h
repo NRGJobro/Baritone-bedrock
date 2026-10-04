@@ -4,6 +4,7 @@
 
 class ClickGui {
 public:
+    static void setOpen(bool open);
     static void render();
     static void onKey(int key, bool pressed, bool& cancel);
     static void onMouse(int button, bool pressed, bool& cancel);
@@ -15,4 +16,5 @@ private:
     static inline mce::Mesh modMesh{}, modHoverMesh{}, cardAccentMesh{}, settingsMesh{}, enabledStateMesh{}, circle{};
 
     static void buildMeshes();
+    static void maintainMouseCapture();
 };

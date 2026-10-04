@@ -21,7 +21,42 @@ static bool baritoneSettingsExpanded = false;
 static bool rotationSliderDragging = false;
 static bool bridgeLengthSliderDragging = false;
 
+void ClickGui::setOpen(const bool open) {
+    if (g_Client.clickGuiOpened == open) {
+        if (open)
+            maintainMouseCapture();
+        return;
+    }
+
+    g_Client.clickGuiOpened = open;
+    const auto window = MC::getWindowHandle();
+    if (open) {
+        if (auto* client = MC::getClientInstance(); client != nullptr)
+            client->releaseMouse();
+        ClipCursor(nullptr);
+        if (IsWindow(window))
+            SetCapture(window);
+        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+    } else {
+        if (GetCapture() == window)
+            ReleaseCapture();
+        if (auto* client = MC::getClientInstance(); client != nullptr)
+            client->grabMouse();
+    }
+}
+
+void ClickGui::maintainMouseCapture() {
+    const auto window = MC::getWindowHandle();
+    ClipCursor(nullptr);
+    if (IsWindow(window) && GetCapture() != window)
+        SetCapture(window);
+    SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+}
+
 void ClickGui::render() {
+    if (g_Client.clickGuiOpened)
+        maintainMouseCapture();
+
     const auto screenContext = DrawUtils::getScreenContext();
     const auto tessellator = DrawUtils::getTessellator();
     const auto material = DrawUtils::getUIFillColor();
@@ -441,11 +476,8 @@ void ClickGui::onKey(int key, bool pressed, bool& cancel) {
     if (key == VK_ESCAPE) {
         if (baritoneSettingsExpanded)
             baritoneSettingsExpanded = false;
-        else {
-            g_Client.clickGuiOpened = false;
-            if (auto* client = MC::getClientInstance(); client != nullptr)
-                client->grabMouse();
-        }
+        else
+            setOpen(false);
     }
     rotationSliderDragging = false;
     bridgeLengthSliderDragging = false;
