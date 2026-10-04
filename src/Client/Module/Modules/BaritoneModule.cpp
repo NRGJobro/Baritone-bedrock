@@ -97,6 +97,15 @@ void BaritoneModule::onDisable() {
 }
 
 void BaritoneModule::onTick() {
+    if (elytraProcess.isActive()) {
+        elytraProcess.tick(MC::getLocalPlayer());
+        if (auto message = elytraProcess.takeMessage())
+            reply(*message);
+        if (!elytraProcess.isActive())
+            setEnabled(false);
+        return;
+    }
+
     controller.tick();
     miningProcess.tick(controller);
     exploreProcess.tick(controller);
@@ -110,19 +119,29 @@ void BaritoneModule::onTick() {
 }
 
 void BaritoneModule::onPostTick() {
+    if (elytraProcess.isActive())
+        return;
     controller.postTick();
     baritone::bedrock_block_breaking::flushCommit();
 }
 
 void BaritoneModule::onBeforeRenderLevel() {
+    if (elytraProcess.isActive())
+        return;
     controller.beginVisualRotationRender();
 }
 
 void BaritoneModule::onAfterRenderLevel() {
+    if (elytraProcess.isActive())
+        return;
     controller.endVisualRotationRender();
 }
 
 void BaritoneModule::onRenderLevel() {
+    if (elytraProcess.isActive()) {
+        elytraProcess.render();
+        return;
+    }
     controller.render(miningProcess.getRenderTargets(), miningProcess.isActive());
 }
 
@@ -148,7 +167,8 @@ bool BaritoneModule::handleChat(const std::string& message) {
         "help", "goto", "goal", "path", "stop", "cancel", "pause", "resume",
         "status", "eta", "water", "fall", "parkour", "bridge", "set", "y", "xz",
         "near", "interact", "twoblocks", "axis", "highway", "thisway", "forward",
-        "away", "surface", "top", "mine", "tunnel", "explore", "waypoint", "wp"
+        "away", "surface", "top", "mine", "tunnel", "explore", "waypoint", "wp",
+        "fly"
     };
     if (directDotCommand && !commands.contains(command)) return false;
 
@@ -165,6 +185,7 @@ bool BaritoneModule::handleChat(const std::string& message) {
         reply("GOALS: .axis | .thisway blocks | .away x y z blocks | .surface");
         reply("PROCESS: .mine name[,name] [count] [radius] [continue] | .tunnel [h w depth] | .explore [chunkRadius]");
         reply("WAYPOINTS: .wp save/goto/delete/list <name>");
+        reply("ELYTRA: .fly x y z | .fly stop | .fly rockets ticks");
         reply("CONTROL: .path | .stop | .pause | .resume | .status | .eta");
         reply("POLICY: .set name value | .water | .fall | .parkour | .bridge");
         return true;
@@ -458,6 +479,29 @@ bool BaritoneModule::handleChat(const std::string& message) {
         return true;
     }
 
+    if (command == "fly") {
+        if (args.size() == 2 && lower(args[1]) == "stop") {
+            stopProcesses();
+            reply("Elytra autopilot stopped.");
+            return true;
+        }
+        if (args.size() == 3 && lower(args[1]) == "rockets") {
+            int interval{};
+            if (!parseInt(args[2], interval) || interval < 0) { reply("Usage: .fly rockets ticks"); return true; }
+            elytraProcess.getRocketInterval() = interval;
+            reply("Rocket interval set to " + std::to_string(interval) + " ticks.");
+            return true;
+        }
+        if (args.size() != 4) { reply("Usage: .fly x y z | .fly stop | .fly rockets ticks"); return true; }
+        int x{}, y{}, z{};
+        if (!parseInt(args[1], x) || !parseInt(args[2], y) || !parseInt(args[3], z)) { reply("Usage: .fly x y z"); return true; }
+        stopProcesses();
+        enable();
+        elytraProcess.start(baritone::BlockPos{x, y, z});
+        reply("Elytra autopilot engaged.");
+        return true;
+    }
+
     reply("Unknown or malformed command. Use .help.");
     return true;
 }
@@ -471,6 +515,8 @@ void BaritoneModule::stopProcesses() {
         miningProcess.cancel(controller);
     if (exploreProcess.isActive())
         exploreProcess.cancel(controller);
+    if (elytraProcess.isActive())
+        elytraProcess.cancel(MC::getLocalPlayer());
     controller.stop();
 }
 

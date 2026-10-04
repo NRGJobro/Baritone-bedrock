@@ -5,6 +5,9 @@
 #include "../../../Client/GUI/ClickGui.h"
 #include "../../../Client/Module/ModuleManager.h"
 #include "../../../Client/Module/Modules/FullBrightModule.h"
+#include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
+#include "../../../Baritone/Bedrock/ElytraProcess.h"
+#include "../../../SDK/Client/Input/MouseDevice.h"
 #include "../../../SDK/MC.h"
 #include "../../../SDK/Network/LoopbackPacketSender.h"
 #include "../../../SDK/Network/Packet/Packet.h"
@@ -61,44 +64,84 @@ const char* blockActionName(const PlayerActionType action) {
 
 void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* packet) {
     static auto original = GET_HOOK(&LoopbackPacketSender_sendToServer);
-    if (packet == nullptr || original == nullptr)
-        return;
-
-    const auto id = packet->getID();
-    if (id == MinecraftPacketIds::Text) {
-        const auto& message = getTextMessage(*static_cast<TextPacketView*>(packet));
-        if (!message.empty() && g_modMgr.handleChat(message))
-            return;
-    }
-
-    if (id == MinecraftPacketIds::PlayerAuthInputPacket)
-        baritone::bedrock_block_breaking::rewritePlayerAuthInput(*static_cast<PlayerAuthInputPacket*>(packet));
-
-    if (id == MinecraftPacketIds::PlayerAction) {
-        const auto* action = static_cast<const LoggedPlayerActionPacket*>(packet);
-        const int actionValue = static_cast<int>(action->action);
-        if (actionValue == 0 || actionValue == 1 || actionValue == 2 || actionValue == 18) {
-            logF("[BlockPacket] PlayerAction action={}({}) pos=({}, {}, {}) face={}",
-                blockActionName(action->action), actionValue, action->blockPos.x,
-                action->blockPos.y, action->blockPos.z, action->face);
+    if (packet != nullptr) {
+        const auto id = packet->getID();
+        if (id == MinecraftPacketIds::PlayerAuthInputPacket) {
+            baritone::bedrock_block_breaking::rewritePlayerAuthInput(
+                *static_cast<PlayerAuthInputPacket*>(packet));
+            baritone::ElytraProcess::rewriteAuthInput(
+                *static_cast<PlayerAuthInputPacket*>(packet));
         }
-    } else if (id == MinecraftPacketIds::PlayerAuthInputPacket) {
-        const auto* input = static_cast<const PlayerAuthInputPacket*>(packet);
-        const auto count = input->blockActions.size();
-        if ((input->inputFlags.test(35) || count > 0) && count <= 32) {
-            logF("[BlockPacket] AuthInput tick={} pitch={:.2f} yaw={:.2f} bodyYaw={:.2f} perform={} actions={} flags=0x{:X}",
-                input->clientTick, input->pitch, input->yaw, input->bodyYaw,
-                input->inputFlags.test(35), count, input->inputFlags.to_ullong());
-            for (const auto& action : input->blockActions) {
-                logF("[BlockPacket]   action={}({}) pos=({}, {}, {}) face={}",
-                    blockActionName(action.type), static_cast<int>(action.type),
-                    action.pos.x, action.pos.y, action.pos.z, static_cast<int>(action.face));
+        if (id == MinecraftPacketIds::PlayerAction) {
+            const auto* action = static_cast<const LoggedPlayerActionPacket*>(packet);
+            const int actionValue = static_cast<int>(action->action);
+            if (actionValue == 0 || actionValue == 1 || actionValue == 2 || actionValue == 18) {
+                logF("[BlockPacket] PlayerAction action={}({}) pos=({}, {}, {}) face={}",
+                    blockActionName(action->action), actionValue, action->blockPos.x,
+                    action->blockPos.y, action->blockPos.z, action->face);
             }
+        } else if (id == MinecraftPacketIds::PlayerAuthInputPacket) {
+            const auto* input = static_cast<const PlayerAuthInputPacket*>(packet);
+            // PerformBlockActions is input flag 35. A sane action count guard
+            // prevents a stale layout from ever being dereferenced.
+            const auto count = input->blockActions.size();
+            if ((input->inputFlags.test(35) || count > 0) && count <= 32) {
+                logF("[BlockPacket] AuthInput tick={} pitch={:.2f} yaw={:.2f} bodyYaw={:.2f} perform={} actions={} flags=0x{:X}",
+                    input->clientTick, input->pitch, input->yaw, input->bodyYaw,
+                    input->inputFlags.test(35), count, input->inputFlags.to_ullong());
+                logF("[BlockPacket]   interact=({:.2f}, {:.2f}) camera=({:.3f}, {:.3f}, {:.3f}) model={}",
+                    input->interactRotation.x, input->interactRotation.y,
+                    input->cameraOrientation.x, input->cameraOrientation.y,
+                    input->cameraOrientation.z, input->interactionModel);
+                for (const auto& action : input->blockActions) {
+                    logF("[BlockPacket]   action={}({}) pos=({}, {}, {}) face={}",
+                        blockActionName(action.type), static_cast<int>(action.type),
+                        action.pos.x, action.pos.y, action.pos.z, static_cast<int>(action.face));
+                }
+                if (input->inputFlags.test(34)) {
+                    // PlayerAuthInput stores a unique_ptr to
+                    // PackedItemUseLegacyInventoryTransaction in the first
+                    // eight bytes after clientTick. Log only its scalar
+                    // ItemUse transaction fields; item/NBT data is ignored.
+                    const auto* packed = *reinterpret_cast<std::byte* const*>(input->padding);
+                    if (packed != nullptr) {
+                        const auto readInt = [packed](const std::size_t offset) {
+                            int value{};
+                            std::memcpy(&value, packed + offset, sizeof(value));
+                            return value;
+                        };
+                        const auto readByte = [packed](const std::size_t offset) {
+                            return std::to_integer<unsigned int>(packed[offset]);
+                        };
+                        const auto readVec = [packed](const std::size_t offset) {
+                            glm::vec3 value{};
+                            std::memcpy(&value, packed + offset, sizeof(value));
+                            return value;
+                        };
+                        // Packed header is 40 bytes; ItemUse's base occupies
+                        // 104 bytes in this build.
+                        constexpr std::size_t itemUse = 40;
+                        const glm::ivec3 transactionPos{readInt(itemUse + 112),
+                            readInt(itemUse + 116), readInt(itemUse + 120)};
+                        const auto from = readVec(itemUse + 232);
+                        const auto click = readVec(itemUse + 244);
+                        logF("[BlockTransaction] action={} trigger={} pos=({}, {}, {}) targetId={} face={} slot={} from=({:.3f}, {:.3f}, {:.3f}) click=({:.3f}, {:.3f}, {:.3f}) predicted={} cooldown={}",
+                            readInt(itemUse + 104), readByte(itemUse + 108),
+                            transactionPos.x, transactionPos.y, transactionPos.z,
+                            readInt(itemUse + 124), readByte(itemUse + 128),
+                            readInt(itemUse + 132), from.x, from.y, from.z,
+                            click.x, click.y, click.z, readByte(itemUse + 256),
+                            readByte(itemUse + 257));
+                    }
+                }
+            }
+        } else if (id == MinecraftPacketIds::InventoryTransaction) {
+            // A survival block is not committed by CrackBlock alone. This is
+            // the definitive completion packet and is intentionally logged
+            // without inspecting any inventory/item payload.
+            logF("[BlockPacket] InventoryTransaction sent");
         }
-    } else if (id == MinecraftPacketIds::InventoryTransaction) {
-        logF("[BlockPacket] InventoryTransaction sent");
     }
-
     original(sender, packet);
 }
 

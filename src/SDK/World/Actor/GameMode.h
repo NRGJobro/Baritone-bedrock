@@ -20,4 +20,8 @@ public:
     virtual void startBuildBlock(const glm::ivec3&, FacingID, bool auth);
     virtual bool buildBlock(const glm::ivec3&, FacingID, bool auth = false);
     virtual void continueBuildBlock(const glm::ivec3&, FacingID);
+    virtual void stopBuildBlock();
+    virtual void tick();
+    virtual float getPickRange(const int&);
+    virtual bool useItem(ItemStack&);
 };
