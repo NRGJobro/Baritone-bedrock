@@ -206,9 +206,9 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 std::clamp(centerDistance * 2.5f, 0.12f, 0.55f);
             const float yaw = player->getRotation().y * std::numbers::pi_v<float> / 180.f;
             const glm::vec2 forward{-std::sin(yaw), std::cos(yaw)};
-            const glm::vec2 right{-forward.y, forward.x};
+            const glm::vec2 right{forward.y, -forward.x};
             const float forwardAmount = std::clamp(glm::dot(forward, correction), -0.55f, 0.55f);
-            const float leftAmount = std::clamp(-glm::dot(right, correction), -0.55f, 0.55f);
+            const float strafeAmount = std::clamp(glm::dot(right, correction), -0.55f, 0.55f);
             if (const auto input = player->tryGet<MoveInputComponent>()) {
                 if (!movementModeCaptured) {
                     previousCameraRelativeMovement = input->isCameraRelativeMovementEnabled;
@@ -217,14 +217,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 }
                 input->isCameraRelativeMovementEnabled = false;
                 input->isRotControlledByMoveDirection = true;
-                const glm::vec2 movement{leftAmount, forwardAmount};
+                const glm::vec2 movement{strafeAmount, forwardAmount};
                 input->move = movement;
                 input->inputState.analogMoveVector = movement;
                 input->rawInputState.analogMoveVector = movement;
                 input->inputState.up = input->rawInputState.up = forwardAmount > 0.35f;
                 input->inputState.down = input->rawInputState.down = forwardAmount < -0.35f;
-                input->inputState.left = input->rawInputState.left = leftAmount > 0.35f;
-                input->inputState.right = input->rawInputState.right = leftAmount < -0.35f;
+                input->inputState.left = input->rawInputState.left = strafeAmount < -0.35f;
+                input->inputState.right = input->rawInputState.right = strafeAmount > 0.35f;
                 input->inputState.upLeft = input->rawInputState.upLeft = input->inputState.up && input->inputState.left;
                 input->inputState.upRight = input->rawInputState.upRight = input->inputState.up && input->inputState.right;
                 input->inputState.downLeft = input->rawInputState.downLeft = input->inputState.down && input->inputState.left;
@@ -1281,9 +1281,9 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     if (facingDistance > 0.001f)
         facingDirection /= facingDistance;
 
-    // Keep the actor facing the rendered path for the entire route. Movement is
-    // resolved against this same yaw below, so W is genuinely forward and the
-    // native sprint state no longer drops when the user's camera pointed away.
+    // Keep path-facing rotation as a render target only. Phase leaves the
+    // player's real camera yaw authoritative and converts the world-space path
+    // direction into camera-relative forward/strafe input below.
     if (facingDistance > 0.001f) {
         auto rotation = player->getRotation();
         if (isBridge && !bridgePitchActive) {
@@ -1305,13 +1305,11 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             visualBodyYaw = rotation.y;
             visualYawInitialized = true;
         }
-        rotation.y = desiredYaw;
-        player->setRotation(rotation);
     }
 
-    const float yaw = player->getRotation().y * std::numbers::pi_v<float> / 180.f;
+    const float yaw = cameraYaw * std::numbers::pi_v<float> / 180.f;
     const glm::vec2 forward{-std::sin(yaw), std::cos(yaw)};
-    const glm::vec2 right{-forward.y, forward.x};
+    const glm::vec2 right{forward.y, -forward.x};
     const float parkourLength = static_cast<float>(std::max(parkourDistance, 1));
     const float requestedForward = std::clamp(glm::dot(forward, direction), -1.f, 1.f);
     const bool parkourNeedsSprint = isParkour && (parkourDistance >= 3 || parkourAscend);
@@ -1377,10 +1375,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             requestedForward * pathMovementScale)))));
     // Keep lateral correction active while braking so an imperfect launch is
     // pulled back over the landing block instead of drifting beside it.
-    const float leftAmount = std::clamp(-glm::dot(right, direction), -1.f, 1.f) *
+    const float strafeAmount = std::clamp(glm::dot(right, direction), -1.f, 1.f) *
         ((parkourAirRelease || parkourAirBrake) ?
             std::clamp(parkourLateralCorrection * 2.5f, 0.25f, 1.f) : 1.f);
-    glm::vec2 localMovement{leftAmount, forwardAmount};
+    glm::vec2 localMovement{strafeAmount, forwardAmount};
     if (node.movement == MovementType::WaterDrop && !inWaterBlocks) {
         // Regulate both world axes throughout the fall, including overshoot.
         // Do not normalize this correction or keep a fixed forward tangent.
@@ -1390,20 +1388,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         const float magnitude = glm::length(correction);
         if (magnitude > 1.f)
             correction /= magnitude;
-        localMovement = {-glm::dot(right, correction), glm::dot(forward, correction)};
+        localMovement = {glm::dot(right, correction), glm::dot(forward, correction)};
     }
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
-        if (!movementModeCaptured) {
-            previousCameraRelativeMovement = input->isCameraRelativeMovementEnabled;
-            previousRotationControlledByMovement = input->isRotControlledByMoveDirection;
-            movementModeCaptured = true;
-        }
-        // Use the actor/path yaw for all movement. Leaving this camera-relative
-        // is what made the bot strafe or walk backward and lose sprint.
-        input->isCameraRelativeMovementEnabled = false;
-        input->isRotControlledByMoveDirection = true;
-
         input->move = localMovement;
         input->inputState.analogMoveVector = localMovement;
         input->rawInputState.analogMoveVector = localMovement;
@@ -1411,8 +1399,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         constexpr float digitalThreshold = 0.35f;
         input->inputState.up = localMovement.y > digitalThreshold;
         input->inputState.down = localMovement.y < -digitalThreshold;
-        input->inputState.left = localMovement.x > digitalThreshold;
-        input->inputState.right = localMovement.x < -digitalThreshold;
+        input->inputState.left = localMovement.x < -digitalThreshold;
+        input->inputState.right = localMovement.x > digitalThreshold;
         input->rawInputState.up = input->inputState.up;
         input->rawInputState.down = input->inputState.down;
         input->rawInputState.left = input->inputState.left;
@@ -1657,15 +1645,10 @@ void PathExecutor::suspend(LocalPlayer* player) {
 }
 
 void PathExecutor::applyVisualRotation(LocalPlayer* player) {
-    // Physics/networking consumed the exact movement yaw. Restore the native
-    // camera yaw immediately afterward; Limiter server rotation never forces the
-    // user's camera to follow its server-facing rotation.
-    if (player == nullptr || !pathRotationActive || !cameraYawCaptured)
-        return;
-
-    auto rotation = player->getRotation();
-    rotation.y = cameraYaw;
-    player->setRotation(rotation);
+    // Steering is now converted into camera-relative forward/strafe input and
+    // never changes the actor's real yaw. The path-facing rotation is applied
+    // only inside the render callbacks, so there is nothing to restore here.
+    (void)player;
 }
 
 void PathExecutor::beginVisualRotationRender(LocalPlayer* player) {
