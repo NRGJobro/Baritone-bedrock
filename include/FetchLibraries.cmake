@@ -15,7 +15,7 @@ FetchContent_Declare(
 FetchContent_Declare(
         entt
         GIT_REPOSITORY https://github.com/skypjack/entt.git
-        GIT_TAG 303801c23bf116404fc687bdc103a3a696c17d97
+        GIT_TAG fe8d7d78c4823e8a66a050bf86f5c6318cf76ce7
 )
 
 FetchContent_Declare(

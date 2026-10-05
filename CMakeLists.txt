@@ -32,6 +32,7 @@ include(include/FetchLibraries.cmake)
 file(GLOB_RECURSE LIMITER_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 
 add_library(Limiter SHARED ${LIMITER_SOURCES})
+target_compile_definitions(Limiter PRIVATE NOMINMAX)
 target_link_libraries(Limiter PRIVATE minhook libhat EnTT::EnTT magic_enum spdlog::spdlog glm dwmapi.lib)
 target_precompile_headers(Limiter PRIVATE PCH.h)
 set_target_properties(Limiter PROPERTIES

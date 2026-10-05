@@ -149,6 +149,15 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         return ExecutionStatus::Arrived;
     }
 
+    // Every movement below must travel through Minecraft's real input
+    // component. Do not report a live executor when the current ECS ABI could
+    // not resolve that component: the path renderer would advance while the
+    // player received no vanilla W/A/S/D state at all.
+    if (player->tryGet<MoveInputComponent>() == nullptr) {
+        lastFailureReason = "vanilla movement input unavailable";
+        return ExecutionStatus::Stuck;
+    }
+
     const auto feet = player->getFeetPosition();
     glm::vec3 measuredMotion{};
     if (const auto state = player->tryGet<StateVectorComponent>()) {

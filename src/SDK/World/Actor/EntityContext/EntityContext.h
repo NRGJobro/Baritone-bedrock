@@ -2,7 +2,15 @@
 
 #include "../Components/IEntityComponent.h"
 
-class EntityId;
+struct EntityId {
+    std::uint32_t rawId;
+
+    [[nodiscard]] constexpr bool operator==(const EntityId& other) const = default;
+
+    [[nodiscard]] constexpr operator std::uint32_t() const {
+        return this->rawId;
+    }
+};
 
 struct EntityIdTraits {
 	using value_type = EntityId;
@@ -14,49 +22,22 @@ struct EntityIdTraits {
 	static constexpr entity_type version_mask = 0x3FFF;
 };
 
-template<typename Type>
-struct entt::storage_type<Type, EntityId> {
-    using type = basic_storage<Type, EntityId>;
-};
-
 template <>
-class entt::entt_traits<EntityId> : public entt::basic_entt_traits<EntityIdTraits> {
-public:
-	static constexpr entity_type page_size = 2048;
-};
-
-class EntityId : public entt::entt_traits<EntityId> {
-public:
-	entity_type rawId{};
-
-	EntityId() = default;
-
-	template <std::integral T>
-		requires(!std::is_same_v<std::remove_cvref_t<T>, bool>)
-	constexpr EntityId(T rawId) : rawId(static_cast<entity_type>(rawId)) {}  // NOLINT
-
-	constexpr bool isNull() const { return *this == entt::null; }
-
-	template <std::integral T>
-		requires(!std::is_same_v<std::remove_cvref_t<T>, bool>)
-	constexpr operator T() const {
-		return static_cast<T>(rawId);
-	}
-
-    [[nodiscard]] constexpr bool operator==(const EntityId& other) const {
-	    return this->rawId == other.rawId;
-	}
-
-    [[nodiscard]] constexpr operator entity_type() const {
-        return this->rawId;
-    }
+struct entt::entt_traits<EntityId> : basic_entt_traits<EntityIdTraits> {
+    static constexpr std::size_t page_size = 2048;
 };
 
 template<std::derived_from<IEntityComponent> Type>
-struct entt::component_traits<Type> {
-    using type = Type;
+struct entt::component_traits<Type, EntityId> {
+    using element_type = Type;
+    using entity_type = EntityId;
     static constexpr bool in_place_delete = true;
     static constexpr std::size_t page_size = 128 * !std::is_empty_v<Type>;
+};
+
+template<typename Type>
+struct entt::storage_type<Type, EntityId> {
+    using type = basic_storage<Type, EntityId>;
 };
 
 class EntityRegistry : public std::enable_shared_from_this<EntityRegistry> {
