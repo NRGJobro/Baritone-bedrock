@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.28)
 
 project(Limiter LANGUAGES CXX)
 
+# Minecraft 1.26's EnTT component pool identifiers must be generated with the
+# same Clang-CL ABI used by Phase. MSVC produces different type identities and
+# silently makes Actor::tryGet return null for every runtime component.
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    message(FATAL_ERROR "Limiter requires Clang-CL for the current Minecraft EnTT ABI. Use the supplied presets.")
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
@@ -15,6 +22,7 @@ if(LIMITER_BUILD_TESTS OR LIMITER_CORE_TESTS_ONLY)
     add_executable(LimiterCoreTests tests/PathfinderTests.cpp
         src/Baritone/Core/Goal.cpp src/Baritone/Core/Movement.cpp
         src/Baritone/Core/Pathfinder.cpp)
+    target_compile_definitions(LimiterCoreTests PRIVATE _USE_STD_VECTOR_ALGORITHMS=0)
     target_include_directories(LimiterCoreTests PRIVATE src)
     if(MSVC)
         target_compile_options(LimiterCoreTests PRIVATE /UNDEBUG)
@@ -32,7 +40,7 @@ include(include/FetchLibraries.cmake)
 file(GLOB_RECURSE LIMITER_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 
 add_library(Limiter SHARED ${LIMITER_SOURCES})
-target_compile_definitions(Limiter PRIVATE NOMINMAX)
+target_compile_definitions(Limiter PRIVATE NOMINMAX _USE_STD_VECTOR_ALGORITHMS=0)
 target_link_libraries(Limiter PRIVATE minhook libhat EnTT::EnTT magic_enum spdlog::spdlog glm dwmapi.lib)
 target_precompile_headers(Limiter PRIVATE PCH.h)
 set_target_properties(Limiter PROPERTIES
