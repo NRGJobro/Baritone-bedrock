@@ -4,6 +4,7 @@
 #include "Hooks/RenderHooks.h"
 
 void HookManager::setHooksEnabled(const bool enabled) {
+    globallyEnabled.store(enabled, std::memory_order_release);
     if (enabled)
         MH_EnableHook(MH_ALL_HOOKS);
     else
@@ -11,7 +12,9 @@ void HookManager::setHooksEnabled(const bool enabled) {
 }
 
 Hook* HookManager::getHook(void* func) {
-    return hooks[func].get();
+    const std::scoped_lock lock(hooksMutex);
+    const auto found = hooks.find(func);
+    return found == hooks.end() ? nullptr : found->second.get();
 }
 
 void HookManager::addHook(const uintptr_t& sig, void* c) {
@@ -20,10 +23,14 @@ void HookManager::addHook(const uintptr_t& sig, void* c) {
         return;
     }
     auto hook = std::make_unique<Hook>(sig, c);
-    hooks.emplace(c, std::move(hook));
+    const std::scoped_lock lock(hooksMutex);
+    const auto [entry, inserted] = hooks.emplace(c, std::move(hook));
+    if (inserted && globallyEnabled.load(std::memory_order_acquire))
+        entry->second->enable();
 }
 
 void HookManager::destroy() {
+    const std::scoped_lock lock(hooksMutex);
     hooks.clear();
 }
 

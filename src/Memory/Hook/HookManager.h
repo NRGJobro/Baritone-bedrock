@@ -27,4 +27,6 @@ public:
 
 private:
     static inline std::unordered_map<void*, std::unique_ptr<Hook>> hooks{};
+    static inline std::mutex hooksMutex{};
+    static inline std::atomic_bool globallyEnabled{false};
 };

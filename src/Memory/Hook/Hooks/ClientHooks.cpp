@@ -125,6 +125,34 @@ void MinecraftGame_grabMouse(void* game) {
         original(game);
 }
 
+void Actor_baseTick(Actor* actor) {
+    static auto original = GET_HOOK(&Actor_baseTick);
+    if (original != nullptr)
+        original(actor);
+
+    // Match Phase's current movement dispatch: vanilla first populates the
+    // MoveInputComponent, then Limiter replaces it before downstream movement
+    // and packet systems consume it.
+    if (actor != nullptr && actor == MC::getLocalPlayer()) {
+        g_modMgr.onTick();
+        g_modMgr.onPostTick();
+    }
+}
+
+void ensureActorBaseTickHook(LocalPlayer* player) {
+    static std::atomic_bool installed{false};
+    if (player == nullptr || installed.load(std::memory_order_acquire))
+        return;
+
+    const auto vtable = *reinterpret_cast<uintptr_t**>(player);
+    if (vtable == nullptr || vtable[25] == 0)
+        return;
+
+    HookManager::addHook(vtable[25], &Actor_baseTick);
+    installed.store(true, std::memory_order_release);
+    logF("Installed ActorBaseTick movement hook at {:#x}", vtable[25]);
+}
+
 void Keyboard_feed(const uint8_t keyCode, const bool down) {
     if (g_Client.keys[keyCode] == down)
         return;
@@ -194,15 +222,11 @@ bool ClientInstance_update(ClientInstance* instance, const uint32_t updateArgume
     if (original == nullptr)
         return false;
 
-    // Run movement before Bedrock consumes input, then apply the visual endpoint
-    // after the native update. Menus receive the untouched native update only.
-    const bool inWorld = instance != nullptr && instance->getLocalPlayer() != nullptr;
-    if (inWorld)
-        g_modMgr.onTick();
-    const bool result = original(instance, updateArgument);
-    if (inWorld)
-        g_modMgr.onPostTick();
-    return result;
+    // The local actor does not exist on menus. Install its stable vtable hook
+    // as soon as a world is joined; HookManager enables late hooks immediately.
+    if (instance != nullptr)
+        ensureActorBaseTickHook(instance->getLocalPlayer());
+    return original(instance, updateArgument);
 }
 
 float BaseOptions_getGamma(void** options) {
@@ -220,6 +244,8 @@ void ClientHooks::init() {
     ADD_HOOK("GrabMouseHook::grabMouseSig", MinecraftGame_grabMouse);
     ADD_HOOK("UpdateHook::updateSig", ClientInstance_update);
     ADD_HOOK("GammaHook::gammaSig", BaseOptions_getGamma);
+
+    ensureActorBaseTickHook(MC::getLocalPlayer());
 
     if (auto* instance = MC::getClientInstance(); instance != nullptr) {
         if (auto* packetSender = instance->getPacketSender(); packetSender != nullptr) {
