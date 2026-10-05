@@ -316,7 +316,12 @@ void BaritoneController::tick() {
     }
 }
 void BaritoneController::postTick() {
-    executor.applyVisualRotation(MC::getLocalPlayer());
+    auto* player = MC::getLocalPlayer();
+    // Phase reapplies its cached command after ActorBaseTick because vanilla
+    // repopulates MoveInputComponent during the original call. Keep the same
+    // ordering so the normal movement systems see Limiter's W/A/S/D state.
+    executor.reapplyInput(player);
+    executor.applyVisualRotation(player);
 }
 
 void BaritoneController::beginVisualRotationRender() {

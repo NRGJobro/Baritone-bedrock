@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Core/Pathfinder.h"
+#include "../../SDK/Client/Input/MoveInputComponent.h"
 #include "../../SDK/World/Level/HitResult/FacingID.h"
 
 #include <glm/glm.hpp>
@@ -79,8 +80,11 @@ class PathExecutor {
     bool waterAllowed = true;
     bool bridgeOverWaterOnly = false;
     std::string lastFailureReason;
+    MoveInputComponent inputCommandSnapshot{};
+    bool inputCommandValid = false;
 
     void clearInput(LocalPlayer* player);
+    void captureInputCommand(const MoveInputComponent* input);
     void resetParkourState();
     bool placeBridgeBlock(LocalPlayer* player, const BlockPos& target, FacingID preferredFace = FacingID::Unknown);
     void selectBestTool(LocalPlayer* player, const BlockPos& target);
@@ -95,6 +99,7 @@ public:
     void updateCapabilities(bool allowTerrainBreaking, bool allowWater,
         bool waterOnlyBridge, bool plannedBreakingOnly);
     ExecutionStatus tick(LocalPlayer* player, const ExecutionOptions& options);
+    void reapplyInput(LocalPlayer* player);
     void applyVisualRotation(LocalPlayer* player);
     void beginVisualRotationRender(LocalPlayer* player);
     void endVisualRotationRender(LocalPlayer* player);

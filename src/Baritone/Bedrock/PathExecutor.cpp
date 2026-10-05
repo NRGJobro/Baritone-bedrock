@@ -225,6 +225,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 input->inputState.down = input->rawInputState.down = forwardAmount < -0.35f;
                 input->inputState.left = input->rawInputState.left = leftAmount > 0.35f;
                 input->inputState.right = input->rawInputState.right = leftAmount < -0.35f;
+                input->inputState.upLeft = input->rawInputState.upLeft = input->inputState.up && input->inputState.left;
+                input->inputState.upRight = input->rawInputState.upRight = input->inputState.up && input->inputState.right;
+                input->inputState.downLeft = input->rawInputState.downLeft = input->inputState.down && input->inputState.left;
+                input->inputState.downRight = input->rawInputState.downRight = input->inputState.down && input->inputState.right;
                 input->inputState.sprintDown = input->rawInputState.sprintDown = false;
                 input->inputState.jumpDown = input->rawInputState.jumpDown = false;
                 input->inputState.jumpInputCurrentlyDown = false;
@@ -236,6 +240,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 input->persistSneak = false;
                 input->wantDown = false;
                 input->moveInputStateLocked = false;
+                captureInputCommand(input);
+                controlledMovement = true;
             }
             ticksWithoutProgress = 0;
             return ExecutionStatus::Running;
@@ -422,6 +428,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 input->inputState.left = input->inputState.right = false;
                 input->rawInputState.up = input->rawInputState.down = false;
                 input->rawInputState.left = input->rawInputState.right = false;
+                input->inputState.upLeft = input->inputState.upRight = false;
+                input->inputState.downLeft = input->inputState.downRight = false;
+                input->rawInputState.upLeft = input->rawInputState.upRight = false;
+                input->rawInputState.downLeft = input->rawInputState.downRight = false;
                 input->inputState.sprintDown = input->rawInputState.sprintDown = false;
                 input->inputState.jumpDown = input->rawInputState.jumpDown = false;
                 input->sprinting = false;
@@ -1407,6 +1417,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         input->rawInputState.down = input->inputState.down;
         input->rawInputState.left = input->inputState.left;
         input->rawInputState.right = input->inputState.right;
+        input->inputState.upLeft = input->rawInputState.upLeft = input->inputState.up && input->inputState.left;
+        input->inputState.upRight = input->rawInputState.upRight = input->inputState.up && input->inputState.right;
+        input->inputState.downLeft = input->rawInputState.downLeft = input->inputState.down && input->inputState.left;
+        input->inputState.downRight = input->rawInputState.downRight = input->inputState.down && input->inputState.right;
 
         // Java Baritone only forces sprint for the maximum-distance or ascending
         // parkour variants. Sprinting on short gaps causes Bedrock to overshoot.
@@ -1483,10 +1497,58 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         input->rawInputState.sneakDown = shouldSneak;
         input->inputState.sneakInputCurrentlyDown = shouldSneak;
         input->rawInputState.sneakInputCurrentlyDown = shouldSneak;
+        captureInputCommand(input);
     }
 
     controlledMovement = true;
     return ExecutionStatus::Running;
+}
+
+void PathExecutor::captureInputCommand(const MoveInputComponent* input) {
+    if (input == nullptr) {
+        inputCommandValid = false;
+        return;
+    }
+    inputCommandSnapshot = *input;
+    inputCommandValid = true;
+}
+
+void PathExecutor::reapplyInput(LocalPlayer* player) {
+    if (player == nullptr || !controlledMovement || !inputCommandValid)
+        return;
+
+    auto* input = player->tryGet<MoveInputComponent>();
+    if (input == nullptr)
+        return;
+
+    const auto copyState = [](MoveInputState& destination, const MoveInputState& source) {
+        destination.analogMoveVector = source.analogMoveVector;
+        destination.up = source.up;
+        destination.down = source.down;
+        destination.left = source.left;
+        destination.right = source.right;
+        destination.upLeft = source.upLeft;
+        destination.upRight = source.upRight;
+        destination.downLeft = source.downLeft;
+        destination.downRight = source.downRight;
+        destination.sprintDown = source.sprintDown;
+        destination.jumpDown = source.jumpDown;
+        destination.jumpInputCurrentlyDown = source.jumpInputCurrentlyDown;
+        destination.sneakDown = source.sneakDown;
+        destination.sneakInputCurrentlyDown = source.sneakInputCurrentlyDown;
+    };
+
+    input->move = inputCommandSnapshot.move;
+    copyState(input->inputState, inputCommandSnapshot.inputState);
+    copyState(input->rawInputState, inputCommandSnapshot.rawInputState);
+    input->sprinting = inputCommandSnapshot.sprinting;
+    input->jumping = inputCommandSnapshot.jumping;
+    input->sneaking = inputCommandSnapshot.sneaking;
+    input->persistSneak = inputCommandSnapshot.persistSneak;
+    input->wantDown = inputCommandSnapshot.wantDown;
+    input->moveInputStateLocked = false;
+    input->isCameraRelativeMovementEnabled = inputCommandSnapshot.isCameraRelativeMovementEnabled;
+    input->isRotControlledByMoveDirection = inputCommandSnapshot.isRotControlledByMoveDirection;
 }
 
 void PathExecutor::stop(LocalPlayer* player) {
@@ -1666,8 +1728,14 @@ void PathExecutor::endVisualRotationRender(LocalPlayer* player) {
 }
 
 void PathExecutor::clearInput(LocalPlayer* player) {
-    if (player == nullptr || !controlledMovement)
+    if (!controlledMovement)
         return;
+
+    inputCommandValid = false;
+    if (player == nullptr) {
+        controlledMovement = false;
+        return;
+    }
 
     if (bridgePitchActive) {
         auto rotation = player->getRotation();
@@ -1697,6 +1765,14 @@ void PathExecutor::clearInput(LocalPlayer* player) {
         input->rawInputState.down = false;
         input->rawInputState.left = false;
         input->rawInputState.right = false;
+        input->inputState.upLeft = false;
+        input->inputState.upRight = false;
+        input->inputState.downLeft = false;
+        input->inputState.downRight = false;
+        input->rawInputState.upLeft = false;
+        input->rawInputState.upRight = false;
+        input->rawInputState.downLeft = false;
+        input->rawInputState.downRight = false;
         input->rawInputState.sprintDown = false;
         input->rawInputState.jumpDown = false;
         input->rawInputState.jumpInputCurrentlyDown = false;
