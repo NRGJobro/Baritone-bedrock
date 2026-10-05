@@ -16,5 +16,4 @@ private:
     static inline mce::Mesh modMesh{}, modHoverMesh{}, cardAccentMesh{}, settingsMesh{}, enabledStateMesh{}, circle{};
 
     static void buildMeshes();
-    static void maintainMouseCapture();
 };

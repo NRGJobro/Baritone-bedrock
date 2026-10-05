@@ -20,6 +20,8 @@ void SigInit::initHooks() {
         "E8 ? ? ? ? 48 8B 4B ? 48 85 C9 74 ? 48 8B 01 48 8B 40 ? 48 89 FA FF 15 ? ? ? ? 48 8D 4D");
     ADD_SIG("WindowProcCallbackHook::keymapSig",
         "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 89 D6 4C 8B 3D");
+    ADD_SIG("GrabMouseHook::grabMouseSig",
+        "55 41 56 56 57 53 48 83 EC ? 48 8D 6C 24 ? 48 C7 45 ? ? ? ? ? 80 B9 ? ? ? ? ? 0F 85 ? ? ? ? 48 89 CE 48 83 C1");
     ADD_SIG("UpdateHook::updateSig",
         "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 89 D3 48 89 CE 48 8B 01");
     ADD_SIG("LevelRendererHook::levelRendererHookSig",

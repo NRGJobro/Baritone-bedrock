@@ -66,6 +66,11 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
     static auto original = GET_HOOK(&LoopbackPacketSender_sendToServer);
     if (packet != nullptr) {
         const auto id = packet->getID();
+        if (id == MinecraftPacketIds::Text) {
+            const auto* textPacket = static_cast<const TextPacketView*>(packet);
+            if (g_modMgr.handleChat(getTextMessage(*textPacket)))
+                return;
+        }
         if (id == MinecraftPacketIds::PlayerAuthInputPacket) {
             baritone::bedrock_block_breaking::rewritePlayerAuthInput(
                 *static_cast<PlayerAuthInputPacket*>(packet));
@@ -107,6 +112,17 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
         }
     }
     original(sender, packet);
+}
+
+void MinecraftGame_grabMouse(void* game) {
+    static auto original = GET_HOOK(&MinecraftGame_grabMouse);
+    // Minecraft calls this routine again during normal world updates. Phase
+    // keeps its screen-space ClickGUI interactive by suppressing those
+    // recapture attempts until the GUI closes.
+    if (g_Client.clickGuiOpened)
+        return;
+    if (original != nullptr)
+        original(game);
 }
 
 void Keyboard_feed(const uint8_t keyCode, const bool down) {
@@ -201,6 +217,7 @@ float BaseOptions_getGamma(void** options) {
 
 void ClientHooks::init() {
     ADD_HOOK("WindowProcCallbackHook::keymapSig", MainWindow__windowProcCallback);
+    ADD_HOOK("GrabMouseHook::grabMouseSig", MinecraftGame_grabMouse);
     ADD_HOOK("UpdateHook::updateSig", ClientInstance_update);
     ADD_HOOK("GammaHook::gammaSig", BaseOptions_getGamma);
 
