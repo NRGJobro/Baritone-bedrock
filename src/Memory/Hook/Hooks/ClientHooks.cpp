@@ -11,6 +11,7 @@
 #include "../../../SDK/Network/LoopbackPacketSender.h"
 #include "../../../SDK/Network/Packet/Packet.h"
 #include "../../../SDK/Network/Packet/Packets/PlayerAuthInputPacket.h"
+#include "../../../SDK/Client/Input/MoveInputComponent.h"
 #include "../../../SDK/World/Level/HitResult/FacingID.h"
 #include "../../../Utils/Logger.h"
 #include "../HookManager.h"
@@ -128,6 +129,28 @@ void MinecraftGame_grabMouse(void* game) {
 void Actor_baseTick(Actor* actor) {
     static auto original = GET_HOOK(&Actor_baseTick);
     const bool localPlayerTick = actor != nullptr && actor == MC::getLocalPlayer();
+    static std::uint64_t movementTraceTick = 0;
+    const bool traceMovement = localPlayerTick && (++movementTraceTick % 20 == 0);
+    const auto traceInput = [traceMovement](const char* stage, Actor* currentActor) {
+        if (!traceMovement || currentActor == nullptr)
+            return;
+        auto* input = currentActor->tryGet<MoveInputComponent>();
+        const auto position = currentActor->getPosition();
+        if (input == nullptr) {
+            logF("[MovementTrace] {} actor={:#x} input=null pos=({:.3f},{:.3f},{:.3f})",
+                stage, reinterpret_cast<std::uintptr_t>(currentActor), position.x, position.y, position.z);
+            return;
+        }
+        logF("[MovementTrace] {} actor={:#x} input={:#x} move=({:.3f},{:.3f}) analog=({:.3f},{:.3f}) "
+             "dirs={}{}{}{} locked={} cameraRel={} rotByMove={} pos=({:.3f},{:.3f},{:.3f})",
+            stage, reinterpret_cast<std::uintptr_t>(currentActor), reinterpret_cast<std::uintptr_t>(input),
+            input->move.x, input->move.y,
+            input->rawInputState.analogMoveVector.x, input->rawInputState.analogMoveVector.y,
+            input->rawInputState.up ? 'U' : '-', input->rawInputState.down ? 'D' : '-',
+            input->rawInputState.left ? 'L' : '-', input->rawInputState.right ? 'R' : '-',
+            input->moveInputStateLocked, input->isCameraRelativeMovementEnabled,
+            input->isRotControlledByMoveDirection, position.x, position.y, position.z);
+    };
 
     // Phase's Pathfinder prepares its command during ActorBaseTickEvent before
     // the original ActorBaseTick. This is late enough that Minecraft has
@@ -135,12 +158,15 @@ void Actor_baseTick(Actor* actor) {
     // collision, and packet prediction to consume the synthetic W/A/S/D state.
     if (localPlayerTick)
         g_modMgr.onTick();
+    traceInput("command", actor);
 
     if (original != nullptr)
         original(actor);
+    traceInput("native", actor);
 
     if (localPlayerTick)
         g_modMgr.onPostTick();
+    traceInput("reapply", actor);
 }
 
 void ensureActorBaseTickHook(LocalPlayer* player) {
