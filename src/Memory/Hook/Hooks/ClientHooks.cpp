@@ -127,16 +127,20 @@ void MinecraftGame_grabMouse(void* game) {
 
 void Actor_baseTick(Actor* actor) {
     static auto original = GET_HOOK(&Actor_baseTick);
+    const bool localPlayerTick = actor != nullptr && actor == MC::getLocalPlayer();
+
+    // Phase's Pathfinder prepares its command during ActorBaseTickEvent before
+    // the original ActorBaseTick. This is late enough that Minecraft has
+    // populated MoveInputComponent, but early enough for vanilla acceleration,
+    // collision, and packet prediction to consume the synthetic W/A/S/D state.
+    if (localPlayerTick)
+        g_modMgr.onTick();
+
     if (original != nullptr)
         original(actor);
 
-    // Match Phase's current movement dispatch: vanilla first populates the
-    // MoveInputComponent, then Limiter replaces it before downstream movement
-    // and packet systems consume it.
-    if (actor != nullptr && actor == MC::getLocalPlayer()) {
-        g_modMgr.onTick();
+    if (localPlayerTick)
         g_modMgr.onPostTick();
-    }
 }
 
 void ensureActorBaseTickHook(LocalPlayer* player) {
