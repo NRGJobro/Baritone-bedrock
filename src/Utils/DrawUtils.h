@@ -1,9 +1,12 @@
 #pragma once
 
 #include "../SDK/Client/Font/Fonts.h"
-#include "../SDK/Client/MCE/MaterialPtr.h"
-#include "../SDK/Render/MinecraftUIRenderContext.h"
-#include "../SDK/Render/ScreenContext.h"
+#include "../SDK/Client/MCE/Color.h"
+
+class MinecraftUIRenderContext;
+class ScreenContext;
+class Tessellator;
+namespace mce { class MaterialPtr; }
 
 class DrawUtils {
 public:
