@@ -2,6 +2,11 @@
 
 #include "../../Client.h"
 #include "../../SDK/MC.h"
+#include "../../SDK/Client/ClientInstance.h"
+#include "../../SDK/Client/GUI/GuiData.h"
+#include "../../SDK/Client/MCE/Camera.h"
+#include "../../SDK/Render/Matrix/MatrixStack.h"
+#include "../../SDK/Render/Tessellator.h"
 #include "../../SDK/Render/MeshHelpers.h"
 #include "../../Utils/DrawUtils.h"
 #include "../Modules/LimiterModule.h"
