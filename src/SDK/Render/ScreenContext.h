@@ -1,13 +1,14 @@
 #pragma once
 
 #include "../Bedrock/NonOwnerPointer.h"
-#include "../Client/GUI/GuiData.h"
-#include "../Client/MCE/Clock.h"
 #include "../Client/MCE/MeshContext.h"
-#include "../Screen/UIProfanityContext.h"
-#include "ShaderColor.h"
-#include "Tessellator.h"
 #include "UIScreenContext.h"
+
+class GuiData;
+class UIProfanityContext;
+class Tessellator;
+struct ShaderColor;
+namespace mce { struct Clock; struct ViewportInfo; }
 
 class ScreenContext : public UIScreenContext, public mce::MeshContext {
 public:
