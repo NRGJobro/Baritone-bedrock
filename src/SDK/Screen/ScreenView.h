@@ -1,6 +1,6 @@
 #pragma once
 
-#include "VisualTree.h"
+class VisualTree;
 
 class ScreenView {
 public:
