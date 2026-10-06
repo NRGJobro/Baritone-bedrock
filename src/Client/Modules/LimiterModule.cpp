@@ -134,6 +134,16 @@ void LimiterModule::onDisable() {
     stopProcesses();
 }
 
+void LimiterModule::onWorldChanged() {
+    // This path is intentionally object-free: it may run after the old
+    // LocalPlayer/BlockSource was destroyed and before the replacement world
+    // is fully initialized.
+    miningProcess.resetForWorldChange(controller);
+    exploreProcess.resetForWorldChange();
+    elytraProcess.resetForWorldChange();
+    controller.resetForWorldChange();
+}
+
 void LimiterModule::onTick() {
     if (!g_Client.gameplayInputAllowed.load(std::memory_order_acquire)) {
         controller.suspendMovement();
