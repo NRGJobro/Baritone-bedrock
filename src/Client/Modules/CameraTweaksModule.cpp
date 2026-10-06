@@ -1,7 +1,9 @@
 #include "CameraTweaksModule.h"
 
 #include "../../Client.h"
+#include "../../SDK/Client/Camera/CameraComponent.h"
 #include "../../SDK/MC.h"
+#include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../SDK/World/Actor/Components/RenderPositionComponent.h"
 #include "CameraTweaksMath.h"
 
