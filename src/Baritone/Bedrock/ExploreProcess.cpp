@@ -27,6 +27,18 @@ void ExploreProcess::cancel(BaritoneController& controller) {
     controller.stop();
 }
 
+void ExploreProcess::resetForWorldChange() {
+    active = false;
+    origin = {};
+    originChunkX = 0;
+    originChunkZ = 0;
+    maximumRadius = 0;
+    ring = 1;
+    perimeterIndex = 0;
+    visited = 0;
+    pendingMessage.reset();
+}
+
 void ExploreProcess::tick(BaritoneController& controller) {
     if (!active || controller.getState() == ControllerState::Calculating ||
         controller.getState() == ControllerState::Executing ||
