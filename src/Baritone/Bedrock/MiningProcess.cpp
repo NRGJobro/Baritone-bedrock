@@ -12,6 +12,7 @@
 #include "../../SDK/World/Actor/Components/AABBShapeComponent.h"
 #include "../../SDK/World/Actor/Components/ActorOwnerComponent.h"
 #include "../../SDK/World/Actor/Components/ActorTypeComponent.h"
+#include "../../SDK/World/Actor/Components/StateVectorComponent.h"
 #include "../../SDK/World/Block/Block.h"
 #include "../../SDK/World/Block/BlockLegacy.h"
 #include "../../SDK/World/BlockSource.h"
