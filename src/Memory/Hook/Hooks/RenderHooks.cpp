@@ -32,6 +32,9 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
     const auto& name = root->getName();
     if (name != "debug_screen" && name != "toast_screen" && name != "modal_progress_screen")
         currentScreen = name;
+    g_Client.gameplayInputAllowed.store(
+        currentScreen == "hud_screen" && !g_Client.clickGuiOpened,
+        std::memory_order_release);
     if (name != "debug_screen")
         return;
 

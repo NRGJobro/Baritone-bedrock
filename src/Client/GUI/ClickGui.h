@@ -5,6 +5,7 @@
 class ClickGui {
 public:
     static void setOpen(bool open);
+    static void maintainMouseCapture();
     static void render();
     static void onKey(int key, bool pressed, bool& cancel);
     static void onMouse(int button, bool pressed, bool& cancel);

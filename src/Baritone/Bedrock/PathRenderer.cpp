@@ -358,7 +358,10 @@ void PathRenderer::render(const std::vector<PathNode>& path, const std::size_t c
         limiterMiningBreakBlocks(path, firstSegment, throughWalls, options.animatedGoal);
     }
 
-    if (options.renderPath && options.renderCalculations) {
+    // Calculation candidates are useful before a route is available, but
+    // drawing them over an active route produces flickering blue/cyan nodes.
+    // Once executing, the authoritative red path is the only route shown.
+    if (options.renderPath && options.renderCalculations && path.empty()) {
         const float phase = static_cast<float>(TimeUtils::currentTimeMillis() % 1400) / 1400.f *
             2.f * std::numbers::pi_v<float>;
         limiterRoute(bestPath, 0, throughWalls, {0.16f, 0.39f, 1.f, 0.75f});

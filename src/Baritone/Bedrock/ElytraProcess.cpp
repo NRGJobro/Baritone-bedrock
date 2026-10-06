@@ -51,6 +51,12 @@ void ElytraProcess::cancel(LocalPlayer* player) {
     rotationPrimed = false;
 }
 
+void ElytraProcess::suspend(LocalPlayer* player) {
+    restoreHotbar(player != nullptr ? player : MC::getLocalPlayer());
+    sGliding = false;
+    rotationPrimed = false;
+}
+
 bool ElytraProcess::terrainAhead(const glm::vec3& position, float yaw, float pitch) {
     auto* region = MC::getRegion();
     if (region == nullptr)

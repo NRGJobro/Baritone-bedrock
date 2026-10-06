@@ -12,12 +12,61 @@
 #include "../../SDK/World/Inventory/PlayerInventory.h"
 #include "../../SDK/World/Item/ItemStack.h"
 #include "../../SDK/World/Item/Item.h"
+#include "../../Utils/Logger.h"
 #include "../../Utils/TimeUtils.h"
 
 #include <numbers>
 
 namespace baritone {
 namespace {
+
+constexpr std::array<glm::ivec3, 6> faceOffsets{{
+    {0, -1, 0}, {0, 1, 0}, {0, 0, -1},
+    {0, 0, 1}, {-1, 0, 0}, {1, 0, 0}
+}};
+
+// GameMode::buildBlock serializes the current raycast contact into its item-use
+// transaction on 1.26.52. Automated placement therefore has to provide the
+// same solid support/face hit that an actual right click would have produced.
+class PlacementHit {
+    HitResult* hit = nullptr;
+    std::optional<HitResult> saved;
+
+public:
+    PlacementHit(LocalPlayer* player, const glm::ivec3& support, const FacingID face) {
+        const int faceIndex = static_cast<int>(face);
+        auto* level = player == nullptr ? nullptr : player->getLevel();
+        auto* wrapper = level == nullptr ? nullptr : level->getHitResultWrapper();
+        if (wrapper == nullptr || faceIndex < 0 || faceIndex >= static_cast<int>(faceOffsets.size()))
+            return;
+
+        hit = &wrapper->hitResult;
+        saved = *hit;
+        const auto& normal = faceOffsets[faceIndex];
+        hit->startPos = player->getPosition();
+        hit->type = HitResultType::Tile;
+        hit->facing = face;
+        hit->blockPos = support;
+        hit->pos = {
+            support.x + 0.5f + normal.x * 0.5f,
+            support.y + 0.5f + normal.y * 0.5f,
+            support.z + 0.5f + normal.z * 0.5f
+        };
+        const glm::vec3 ray = hit->pos - hit->startPos;
+        const float length = glm::length(ray);
+        hit->rayDir = length > 0.0001f ? ray / length : glm::vec3{0.f, -1.f, 0.f};
+    }
+
+    PlacementHit(const PlacementHit&) = delete;
+    PlacementHit& operator=(const PlacementHit&) = delete;
+
+    ~PlacementHit() {
+        if (hit != nullptr && saved)
+            *hit = *saved;
+    }
+
+    explicit operator bool() const { return hit != nullptr; }
+};
 
 float horizontalDistance(const glm::vec3& left, const glm::vec3& right) {
     const float dx = left.x - right.x;
@@ -91,6 +140,8 @@ void PathExecutor::begin(std::vector<PathNode> newPath, const bool allowTerrainB
     bridgeOverWaterOnly = waterOnlyBridge;
     index = path.size() > 1 ? 1 : path.size();
     lastProgressPosition = {};
+    lastMotionPosition = {};
+    motionSampleInitialized = false;
     ticksWithoutProgress = 0;
     ticksOutsidePath = 0;
     progressInitialized = false;
@@ -160,16 +211,20 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     const auto feet = player->getFeetPosition();
     glm::vec3 measuredMotion{};
-    if (const auto state = player->tryGet<StateVectorComponent>()) {
-        measuredMotion = state->pos - state->posPrev;
-        // Ignore teleports/corrections. For ordinary Bedrock movement the
-        // observed horizontal displacement is substantially below one block
-        // per simulation tick.
-        if (!std::isfinite(measuredMotion.x) || !std::isfinite(measuredMotion.y) ||
-            !std::isfinite(measuredMotion.z) ||
-            glm::length(glm::vec2{measuredMotion.x, measuredMotion.z}) > 1.25f)
-            measuredMotion = {};
-    }
+    // StateVector::posPrev is already synchronized to pos by the time this
+    // callback runs on 1.26.52, so subtracting the two always reports zero.
+    // Measure the actor's real per-tick displacement ourselves. This is only
+    // observation: Bedrock remains responsible for applying all movement.
+    if (motionSampleInitialized)
+        measuredMotion = feet - lastMotionPosition;
+    lastMotionPosition = feet;
+    motionSampleInitialized = true;
+    // Ignore teleports/server corrections. Ordinary horizontal movement is
+    // substantially below one block per simulation tick.
+    if (!std::isfinite(measuredMotion.x) || !std::isfinite(measuredMotion.y) ||
+        !std::isfinite(measuredMotion.z) ||
+        glm::length(glm::vec2{measuredMotion.x, measuredMotion.z}) > 1.25f)
+        measuredMotion = {};
     // Java Baritone advances movements from playerFeet(), not from a predicted
     // future position. The small positive Y allowance mirrors its handling of
     // tiny Bedrock/Java standing-height inaccuracies.
@@ -858,8 +913,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         bridgeNextStep = 1;
         bridgePlacementWait = 0;
     }
-    if (!isBridge && !isBuildAscend)
+    if (!isBridge && !isBuildAscend) {
+        restoreBridgeHotbar(player);
         activeBridgeIndex = static_cast<std::size_t>(-1);
+    }
     if (isBuildAscend && index > 0) {
         const auto& source = path[index - 1].pos;
         const int dx = std::clamp(node.pos.x - source.x, -1, 1);
@@ -877,9 +934,17 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             const float along = glm::dot(playerOffset, glm::normalize(axis));
             const FacingID supportFace = dx > 0 ? FacingID::West : dx < 0 ? FacingID::East :
                 (dz > 0 ? FacingID::North : FacingID::South);
-            if (along >= -0.35f && placeBridgeBlock(player, placementTarget, supportFace)) {
-                bridgeNextStep = 2;
-                bridgePlacementWait = 2;
+            if (along >= -0.35f) {
+                if (placeBridgeBlock(player, placementTarget, supportFace)) {
+                    bridgeNextStep = 2;
+                    bridgePlacementWait = 2;
+                } else {
+                    // A vanilla use action spans several game/update ticks.
+                    // Do not keep walking and move the aimed face underneath
+                    // the player while Minecraft prepares the transaction.
+                    clearInput(player);
+                    return ExecutionStatus::Running;
+                }
             }
         }
     }
@@ -942,9 +1007,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             const float edgeThreshold = diagonalBridge
                 ? std::max(0.32f, projectedPlacement - 0.38f)
                 : (step == 1 ? 0.32f : static_cast<float>(step) - 0.38f);
-            if (along >= edgeThreshold && placeBridgeBlock(player, placementTarget, supportFace)) {
-                bridgeNextStep = step + 1;
-                bridgePlacementWait = 1;
+            if (along >= edgeThreshold) {
+                if (placeBridgeBlock(player, placementTarget, supportFace)) {
+                    bridgeNextStep = step + 1;
+                    bridgePlacementWait = 1;
+                } else {
+                    clearInput(player);
+                    return ExecutionStatus::Running;
+                }
             }
         }
     }
@@ -1151,11 +1221,18 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 parkourRepositioning = true;
             if (parkourRepositioning) {
                 // Reset on the supported source block before another run-up.
-                // No blind reverse movement over the block behind the source.
+                // Use position error plus measured-velocity damping instead
+                // of alternating forward/back input around a single point.
+                // The latter can oscillate forever on a three-block jump.
                 const glm::vec2 runwayStart = sourceCenter - jumpDirection * 0.20f;
-                direction = runwayStart - glm::vec2{feet.x, feet.z};
-                if (parkourAlong <= -0.10f && lateral <= 0.18f &&
-                    std::abs(parkourAlongSpeed) < 0.08f) {
+                const glm::vec2 runwayError = runwayStart - glm::vec2{feet.x, feet.z};
+                const glm::vec2 horizontalMotion{measuredMotion.x, measuredMotion.z};
+                direction = runwayError - horizontalMotion * 2.25f;
+                const float repositionInputLength = glm::length(direction);
+                if (repositionInputLength > 0.60f)
+                    direction = direction / repositionInputLength * 0.60f;
+                if (glm::length(runwayError) <= 0.14f && lateral <= 0.20f &&
+                    std::abs(parkourAlongSpeed) < 0.065f) {
                     parkourRepositioning = false;
                     parkourSprintTicks = 0;
                 }
@@ -1312,6 +1389,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const glm::vec2 right{forward.y, -forward.x};
     const float parkourLength = static_cast<float>(std::max(parkourDistance, 1));
     const float requestedForward = std::clamp(glm::dot(forward, direction), -1.f, 1.f);
+    const float directionLength = glm::length(direction);
+    const float intendedPathAlignment = directionLength > 0.001f
+        ? glm::dot(direction / directionLength, facingDirection)
+        : 0.f;
     const bool parkourNeedsSprint = isParkour && (parkourDistance >= 3 || parkourAscend);
 
     // Decide before crossing the takeoff point. At full Bedrock sprint speed a
@@ -1331,7 +1412,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         parkourDistance, parkourAscend, options.sprint,
         parkourSprintTicks, measuredApproachSpeed);
     const bool requestParkourJump = isParkour && parkourReady && !parkourJumpIssued && sprintReady &&
-        nextParkourAlong >= takeoffDistance && requestedForward > 0.92f;
+        nextParkourAlong >= takeoffDistance && intendedPathAlignment > 0.90f;
     // If sprint has not become valid before the final safe part of the source,
     // release W first. Only use a small reverse input at the last margin; this
     // preserves a natural runway while preventing a momentum-driven walk-off.
@@ -1391,6 +1472,24 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         localMovement = {glm::dot(right, correction), glm::dot(forward, correction)};
     }
 
+    // Bridge nodes deliberately retain fb8e96a's input vector byte-for-byte.
+    // Placement, crouch movement and the render-only bridge rotation were a
+    // working unit in that revision; later ordinary/parkour normalization must
+    // not alter the movement state used when buildBlock creates its transaction.
+    if (!isBridge) {
+        // Vanilla bounds the combined movement stick before acceleration. Keep
+        // diagonal path correction inside that same unit circle so a forward +
+        // strafe request cannot describe an impossible input to BDS.
+        const float inputMagnitude = glm::length(localMovement);
+        if (inputMagnitude > 1.f)
+            localMovement /= inputMagnitude;
+        if (std::abs(localMovement.x) < 0.02f)
+            localMovement.x = 0.f;
+        if (std::abs(localMovement.y) < 0.02f)
+            localMovement.y = 0.f;
+    }
+
+    bool shouldSprint = false;
     if (const auto input = player->tryGet<MoveInputComponent>()) {
         input->move = localMovement;
         input->inputState.analogMoveVector = localMovement;
@@ -1419,7 +1518,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             (ordinaryMovement && !upcomingVerticalOrParkour && (!narrowFooting || precisionSneak) &&
                 !tightObstacleTurn && (!terrainBreakingAllowed || !upcomingTurn));
         const float sprintThreshold = precisionSneak ? 0.45f : (isParkour ? 0.55f : 0.8f);
-        const bool shouldSprint = options.sprint && !parkourRepositioning &&
+        shouldSprint = options.sprint && !parkourRepositioning &&
             forwardAmount > sprintThreshold &&
             (!isParkour || parkourNeedsSprint) && !parkourAirRelease &&
             sprintSafe && !player->isInWater();
@@ -1449,30 +1548,34 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         requestParkourJump;
     const bool shouldSwimUp = inWaterBlocks && (node.movement == MovementType::Swim || target.y >= feet.y - 0.15f);
 
-    // Pulse jump while grounded instead of holding it throughout the flight.
-    // This also prevents an immediate second jump on the landing tick.
+    // Pulse the same input edges generated by a real Space press. Do not call
+    // jumpFromGround or write velocity: Bedrock owns the jump and its packet
+    // prediction, which keeps the result valid for BDS movement checks.
     const bool groundedAtLaunch = player->isOnGround();
     const bool holdJump = (shouldJump && groundedAtLaunch) || shouldSwimUp;
-    // Latch before the native call: jumpFromGround may clear onGround
-    // immediately. Missing this latch steers an airborne ascent backward
-    // toward its takeoff point instead of into the two-block-high landing.
+    // Latch the requested launch before the native movement tick consumes it.
     if (holdJump && isAscending && groundedAtLaunch) {
         ascendJumpIssued = true;
         ascendWasAirborne = false;
         ascendLaunchTicks = 0;
     }
-    if (holdJump && groundedAtLaunch)
-        player->jumpFromGround();
     if (requestParkourJump) {
         parkourJumpIssued = true;
         parkourLaunchTicks = 0;
     }
     if (const auto input = player->tryGet<MoveInputComponent>()) {
+        const bool jumpWasDown = input->rawInputState.jumpInputCurrentlyDown;
         input->jumping = holdJump;
         input->inputState.jumpDown = holdJump;
         input->inputState.jumpInputCurrentlyDown = holdJump;
         input->rawInputState.jumpDown = holdJump;
         input->rawInputState.jumpInputCurrentlyDown = holdJump;
+        if (!isBridge) {
+            input->inputState.jumpInputWasPressed = holdJump && !jumpWasDown;
+            input->inputState.jumpInputWasReleased = !holdJump && jumpWasDown;
+            input->rawInputState.jumpInputWasPressed = holdJump && !jumpWasDown;
+            input->rawInputState.jumpInputWasReleased = !holdJump && jumpWasDown;
+        }
     }
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
@@ -1485,19 +1588,36 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         input->rawInputState.sneakDown = shouldSneak;
         input->inputState.sneakInputCurrentlyDown = shouldSneak;
         input->rawInputState.sneakInputCurrentlyDown = shouldSneak;
-        captureInputCommand(input);
+        captureInputCommand(input, !isBridge);
+    }
+
+    if (isParkour) {
+        const auto rotation = player->getRotation();
+        logF("[Parkour] node={}/{} src=({}, {}, {}) dst=({}, {}, {}) feet=({:.4f},{:.4f},{:.4f}) motion=({:.4f},{:.4f},{:.4f}) ground={} dist={} ascend={} along={:.4f} progress={:.4f} lateral={:.4f} alongSpeed={:.4f} ready={} reposition={} sprintTicks={} sprintReady={} jumpIssued={} airborne={} launchTicks={} nextAlong={:.4f} takeoff={:.4f} align={:.4f} requestJump={} holdJump={} sprint={} release={} brake={} predictedW={:.4f} predictedCoast={:.4f} input=({:.4f},{:.4f}) camera=({:.2f},{:.2f})",
+            index, path.size(), path[index - 1].pos.x, path[index - 1].pos.y,
+            path[index - 1].pos.z, node.pos.x, node.pos.y, node.pos.z,
+            feet.x, feet.y, feet.z, measuredMotion.x, measuredMotion.y, measuredMotion.z,
+            player->isOnGround(), parkourDistance, parkourAscend, parkourAlong,
+            parkourProgress, parkourLateralCorrection, parkourAlongSpeed, parkourReady,
+            parkourRepositioning, parkourSprintTicks, sprintReady, parkourJumpIssued,
+            parkourWasAirborne, parkourLaunchTicks, nextParkourAlong, takeoffDistance,
+            intendedPathAlignment, requestParkourJump, holdJump, shouldSprint,
+            parkourAirRelease, parkourAirBrake, predictedLandingWithForward,
+            predictedLandingCoasting, localMovement.x, localMovement.y,
+            rotation.x, rotation.y);
     }
 
     controlledMovement = true;
     return ExecutionStatus::Running;
 }
 
-void PathExecutor::captureInputCommand(const MoveInputComponent* input) {
+void PathExecutor::captureInputCommand(const MoveInputComponent* input, const bool includeJumpEdges) {
     if (input == nullptr) {
         inputCommandValid = false;
         return;
     }
     inputCommandSnapshot = *input;
+    inputCommandIncludesJumpEdges = includeJumpEdges;
     inputCommandValid = true;
 }
 
@@ -1509,7 +1629,7 @@ void PathExecutor::reapplyInput(LocalPlayer* player) {
     if (input == nullptr)
         return;
 
-    const auto copyState = [](MoveInputState& destination, const MoveInputState& source) {
+    const auto copyState = [this](MoveInputState& destination, const MoveInputState& source) {
         destination.analogMoveVector = source.analogMoveVector;
         destination.up = source.up;
         destination.down = source.down;
@@ -1522,6 +1642,10 @@ void PathExecutor::reapplyInput(LocalPlayer* player) {
         destination.sprintDown = source.sprintDown;
         destination.jumpDown = source.jumpDown;
         destination.jumpInputCurrentlyDown = source.jumpInputCurrentlyDown;
+        if (inputCommandIncludesJumpEdges) {
+            destination.jumpInputWasPressed = source.jumpInputWasPressed;
+            destination.jumpInputWasReleased = source.jumpInputWasReleased;
+        }
         destination.sneakDown = source.sneakDown;
         destination.sneakInputCurrentlyDown = source.sneakInputCurrentlyDown;
     };
@@ -1552,6 +1676,7 @@ void PathExecutor::stop(LocalPlayer* player) {
     ticksWithoutProgress = 0;
     ticksOutsidePath = 0;
     progressInitialized = false;
+    motionSampleInitialized = false;
     pathRotationActive = false;
     visualYawInitialized = false;
     cameraYawCaptured = false;
@@ -1561,6 +1686,7 @@ void PathExecutor::stop(LocalPlayer* player) {
     bridgeNextStep = 1;
     bridgePlacementWait = 0;
     activeBridgeIndex = static_cast<std::size_t>(-1);
+    restoreBridgeHotbar(player);
     bridgePitchActive = false;
     bridgePitch = 0.f;
     activeBreakIndex = static_cast<std::size_t>(-1);
@@ -1595,10 +1721,6 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
     }
     if (blockSlot < 0 || player->getGameMode() == nullptr) return false;
 
-    // Building temporarily needs a placeable block in the active hand. Keep
-    // the player's original hotbar selection and restore it as soon as the
-    // placement call returns, so bridge/build-ascend actions never leave the
-    // client holding an arbitrary scaffolding block.
     const int previousSlot = supplies->getSelectedHotbarSlot();
     supplies->setSelectedHotbarSlot(blockSlot);
     const auto restoreSlot = [&]() {
@@ -1627,6 +1749,17 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
     return false;
 }
 
+void PathExecutor::restoreBridgeHotbar(LocalPlayer* player) {
+    (void)player;
+    bridgeHotbarSlot = -1;
+    previousBridgeHotbarSlot = -1;
+    bridgeEquipWait = 0;
+    bridgeAimFace = -1;
+    bridgeAimWait = 0;
+    bridgeUsePending = false;
+    bridgeUseWait = 0;
+}
+
 void PathExecutor::selectBestTool(LocalPlayer* player, const BlockPos& target) {
     // Preserve the server-synchronized equipped slot; see MiningProcess.
     (void)player;
@@ -1640,6 +1773,7 @@ void PathExecutor::restoreMiningHotbar(LocalPlayer* player) {
 
 void PathExecutor::suspend(LocalPlayer* player) {
     clearInput(player);
+    motionSampleInitialized = false;
     pathRotationActive = false;
     visualYawInitialized = false;
 }
@@ -1679,15 +1813,9 @@ void PathExecutor::beginVisualRotationRender(LocalPlayer* player) {
         head->rotation.y = visualYaw;
     }
     savedActorRotation = player->getRotation();
-    if (bridgePitchActive) {
-        visualPitch += (bridgePitchTarget - visualPitch) *
-            std::clamp(delta * 7.0f, 0.f, 1.f);
-        auto renderRotation = savedActorRotation;
-        renderRotation.x = visualPitch;
-        player->setRotation(renderRotation);
-    } else {
-        visualPitch = savedActorRotation.x;
-    }
+    // Keep the camera's real pitch. A second render-only bridge pitch caused
+    // third person to alternate between looking down and looking forward.
+    visualPitch = savedActorRotation.x;
     if (auto* body = player->tryGet<MobBodyRotationComponent>()) {
         savedBodyRotation = body->bodyRotation;
         savedPreviousBodyRotation = body->previousBodyRotation;
@@ -1744,6 +1872,8 @@ void PathExecutor::clearInput(LocalPlayer* player) {
         input->inputState.sprintDown = false;
         input->inputState.jumpDown = false;
         input->inputState.jumpInputCurrentlyDown = false;
+        input->inputState.jumpInputWasPressed = false;
+        input->inputState.jumpInputWasReleased = false;
         input->rawInputState.up = false;
         input->rawInputState.down = false;
         input->rawInputState.left = false;
@@ -1759,6 +1889,8 @@ void PathExecutor::clearInput(LocalPlayer* player) {
         input->rawInputState.sprintDown = false;
         input->rawInputState.jumpDown = false;
         input->rawInputState.jumpInputCurrentlyDown = false;
+        input->rawInputState.jumpInputWasPressed = false;
+        input->rawInputState.jumpInputWasReleased = false;
         input->inputState.sneakDown = false;
         input->rawInputState.sneakDown = false;
         input->inputState.sneakInputCurrentlyDown = false;

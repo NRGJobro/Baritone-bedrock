@@ -14,9 +14,35 @@
 #include "../../../SDK/Client/Input/MoveInputComponent.h"
 #include "../../../SDK/World/Level/HitResult/FacingID.h"
 #include "../../../Utils/Logger.h"
+#include "../../../Utils/Utils.h"
 #include "../HookManager.h"
 
 namespace {
+
+struct MouseAction {
+    std::int16_t x;
+    std::int16_t y;
+    std::int16_t dx;
+    std::int16_t dy;
+    std::int8_t action;
+    std::int8_t data;
+    int pointerId;
+    bool forceMotionlessPointer;
+};
+
+struct MouseDevice {
+    std::int16_t clickX;
+    std::int16_t clickY;
+    std::int16_t x;
+    std::int16_t y;
+    std::int16_t dx;
+    std::int16_t dy;
+    std::int16_t xOld;
+    std::int16_t yOld;
+    bool buttonStates[7];
+    std::vector<MouseAction> inputs;
+    std::int32_t firstMovementType;
+};
 
 enum class TextPacketType : uint8_t {
     Raw, Chat, Translate, Popup, JukeboxPopup, Tip, SystemMessage, Whisper,
@@ -63,6 +89,19 @@ const char* blockActionName(const PlayerActionType action) {
     }
 }
 
+// PlayerAuthInputPacket has 65 input flags. std::bitset<65>::to_ullong()
+// throws when bit 64 is set, which is a valid Bedrock input flag. Packet
+// diagnostics run inside the send hook, so an exception here terminates the
+// game. Split the high bit from the lower word and keep logging noexcept.
+std::uint64_t inputFlagsLowWord(const std::bitset<65>& flags) noexcept {
+    std::uint64_t value = 0;
+    for (std::size_t bit = 0; bit < 64; ++bit) {
+        if (flags.test(bit))
+            value |= std::uint64_t{1} << bit;
+    }
+    return value;
+}
+
 void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* packet) {
     static auto original = GET_HOOK(&LoopbackPacketSender_sendToServer);
     if (packet != nullptr) {
@@ -92,9 +131,11 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
             // prevents a stale layout from ever being dereferenced.
             const auto count = input->blockActions.size();
             if ((input->inputFlags.test(35) || count > 0) && count <= 32) {
-                logF("[BlockPacket] AuthInput tick={} pitch={:.2f} yaw={:.2f} bodyYaw={:.2f} perform={} actions={} flags=0x{:X}",
+                logF("[BlockPacket] AuthInput tick={} pitch={:.2f} yaw={:.2f} bodyYaw={:.2f} perform={} actions={} flags=0x{}{:016X}",
                     input->clientTick, input->pitch, input->yaw, input->bodyYaw,
-                    input->inputFlags.test(35), count, input->inputFlags.to_ullong());
+                    input->inputFlags.test(35), count,
+                    input->inputFlags.test(64) ? 1 : 0,
+                    inputFlagsLowWord(input->inputFlags));
                 logF("[BlockPacket]   interact=({:.2f}, {:.2f}) camera=({:.3f}, {:.3f}, {:.3f}) model={}",
                     input->interactRotation.x, input->interactRotation.y,
                     input->cameraOrientation.x, input->cameraOrientation.y,
@@ -105,6 +146,8 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
                         action.pos.x, action.pos.y, action.pos.z, static_cast<int>(action.face));
                 }
             }
+        } else if (id == MinecraftPacketIds::PlayerEquipment) {
+            logF("[BridgePacket] PlayerEquipment sent");
         } else if (id == MinecraftPacketIds::InventoryTransaction) {
             // A survival block is not committed by CrackBlock alone. This is
             // the definitive completion packet and is intentionally logged
@@ -124,6 +167,37 @@ void MinecraftGame_grabMouse(void* game) {
         return;
     if (original != nullptr)
         original(game);
+}
+
+void GameControllerHandler_GameCore_refresh(void* handler) {
+    static auto original = GET_HOOK(&GameControllerHandler_GameCore_refresh);
+    if (original != nullptr)
+        original(handler);
+
+    const auto signature = GET_SIG("MouseDevice::instance");
+    if (signature == 0)
+        return;
+    auto* mouse = Utils::getFromOffset<MouseDevice*>(signature, 2);
+    if (mouse == nullptr)
+        return;
+
+    if (!g_Client.clickGuiOpened)
+        return;
+
+    // Phase cancels mouse input at the queue Minecraft actually consumes.
+    // WndProc and raw-input cancellation happen too early to cover this path.
+
+    std::fill(std::begin(mouse->buttonStates), std::end(mouse->buttonStates), false);
+    std::erase_if(mouse->inputs, [](const MouseAction& action) {
+        return action.action >= 1 && action.action <= 4;
+    });
+}
+
+bool ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens(void* level) {
+    static auto original = GET_HOOK(&ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens);
+    if (g_Client.clickGuiOpened)
+        return false;
+    return original != nullptr && original(level);
 }
 
 void Actor_baseTick(Actor* actor) {
@@ -230,6 +304,14 @@ LRESULT MainWindow__windowProcCallback(HWND window, const UINT message, const WP
     if (original == nullptr)
         return DefWindowProcW(window, message, wParam, lParam);
 
+    // Minecraft also consumes Raw Input independently of the ordinary button
+    // messages. Swallow it while ClickGUI owns the mouse, otherwise the same
+    // left click toggles a module and reaches the game as an attack/swing.
+    if (g_Client.clickGuiOpened && message == WM_INPUT) {
+        DefWindowProcW(window, message, wParam, lParam);
+        return 0;
+    }
+
     if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
         Keyboard_feed(static_cast<uint8_t>(wParam & 0xFF), true);
         if (g_Client.blockedKeys[wParam & 0xFF])
@@ -272,8 +354,11 @@ float BaseOptions_getGamma(void** options) {
 void ClientHooks::init() {
     ADD_HOOK("WindowProcCallbackHook::keymapSig", MainWindow__windowProcCallback);
     ADD_HOOK("GrabMouseHook::grabMouseSig", MinecraftGame_grabMouse);
+    ADD_HOOK("MouseHook::mouseSig", GameControllerHandler_GameCore_refresh);
     ADD_HOOK("UpdateHook::updateSig", ClientInstance_update);
     ADD_HOOK("GammaHook::gammaSig", BaseOptions_getGamma);
+    ADD_HOOK("WorldNotShowingMenusHook::worldMenusSig",
+        ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens);
 
     ensureActorBaseTickHook(MC::getLocalPlayer());
 

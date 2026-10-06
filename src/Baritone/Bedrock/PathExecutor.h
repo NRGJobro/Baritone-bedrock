@@ -28,6 +28,8 @@ class PathExecutor {
     std::vector<PathNode> path;
     std::size_t index = 0;
     glm::vec3 lastProgressPosition{};
+    glm::vec3 lastMotionPosition{};
+    bool motionSampleInitialized = false;
     int ticksWithoutProgress = 0;
     int ticksOutsidePath = 0;
     bool progressInitialized = false;
@@ -69,6 +71,16 @@ class PathExecutor {
     int bridgeNextStep = 1;
     int bridgePlacementWait = 0;
     std::size_t activeBridgeIndex = static_cast<std::size_t>(-1);
+    int bridgeHotbarSlot = -1;
+    int previousBridgeHotbarSlot = -1;
+    int bridgeEquipWait = 0;
+    glm::ivec3 bridgeAimSupport{};
+    int bridgeAimFace = -1;
+    int bridgeAimWait = 0;
+    glm::vec2 bridgeAimRotation{};
+    glm::ivec3 bridgeUseTarget{};
+    int bridgeUseWait = 0;
+    bool bridgeUsePending = false;
     std::size_t activeBreakIndex = static_cast<std::size_t>(-1);
     BlockPos activeBreakPos{};
     int obstructionBreakTicks = 0;
@@ -82,11 +94,13 @@ class PathExecutor {
     std::string lastFailureReason;
     MoveInputComponent inputCommandSnapshot{};
     bool inputCommandValid = false;
+    bool inputCommandIncludesJumpEdges = false;
 
     void clearInput(LocalPlayer* player);
-    void captureInputCommand(const MoveInputComponent* input);
+    void captureInputCommand(const MoveInputComponent* input, bool includeJumpEdges = true);
     void resetParkourState();
     bool placeBridgeBlock(LocalPlayer* player, const BlockPos& target, FacingID preferredFace = FacingID::Unknown);
+    void restoreBridgeHotbar(LocalPlayer* player);
     void selectBestTool(LocalPlayer* player, const BlockPos& target);
     void restoreMiningHotbar(LocalPlayer* player);
 

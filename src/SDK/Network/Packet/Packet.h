@@ -20,7 +20,7 @@ public:
     Compressibility compressible;
 
     MinecraftPacketIds getID();
-    std::string getName();
+    std::string_view getName();
 };
 
 static_assert(sizeof(Packet) == 0x30);

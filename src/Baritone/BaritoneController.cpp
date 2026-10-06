@@ -324,6 +324,10 @@ void BaritoneController::postTick() {
     executor.applyVisualRotation(player);
 }
 
+void BaritoneController::suspendMovement() {
+    executor.suspend(MC::getLocalPlayer());
+}
+
 void BaritoneController::beginVisualRotationRender() {
     executor.beginVisualRotationRender(MC::getLocalPlayer());
 }

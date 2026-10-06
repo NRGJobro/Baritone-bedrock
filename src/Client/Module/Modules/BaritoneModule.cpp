@@ -1,7 +1,7 @@
 #include "BaritoneModule.h"
 
 #include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
-
+#include "../../../Client.h"
 
 #include "../../../SDK/MC.h"
 #include "../../../Baritone/Core/AdvancedGoals.h"
@@ -132,6 +132,13 @@ void BaritoneModule::onDisable() {
 }
 
 void BaritoneModule::onTick() {
+    if (!g_Client.gameplayInputAllowed.load(std::memory_order_acquire)) {
+        controller.suspendMovement();
+        if (elytraProcess.isActive())
+            elytraProcess.suspend(MC::getLocalPlayer());
+        return;
+    }
+
     if (elytraProcess.isActive()) {
         elytraProcess.tick(MC::getLocalPlayer());
         if (auto message = elytraProcess.takeMessage())
@@ -154,6 +161,10 @@ void BaritoneModule::onTick() {
 }
 
 void BaritoneModule::onPostTick() {
+    if (!g_Client.gameplayInputAllowed.load(std::memory_order_acquire)) {
+        controller.suspendMovement();
+        return;
+    }
     if (elytraProcess.isActive())
         return;
     controller.postTick();

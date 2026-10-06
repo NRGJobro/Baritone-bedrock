@@ -22,20 +22,45 @@ static bool rotationSliderDragging = false;
 static bool bridgeLengthSliderDragging = false;
 
 void ClickGui::setOpen(const bool open) {
-    if (g_Client.clickGuiOpened == open)
+    if (g_Client.clickGuiOpened == open) {
+        if (open)
+            maintainMouseCapture();
         return;
+    }
 
     g_Client.clickGuiOpened = open;
+    const auto window = MC::getWindowHandle();
     if (open) {
+        g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
         if (auto* client = MC::getClientInstance(); client != nullptr)
             client->releaseMouse();
+        ClipCursor(nullptr);
+        // Keep all button messages routed through our window procedure while
+        // ClickGUI is open. Releasing capture here allowed Bedrock's parallel
+        // mouse path to see the same click as an attack/break action.
+        if (IsWindow(window))
+            SetCapture(window);
+        SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
     } else {
+        if (GetCapture() == window)
+            ReleaseCapture();
         if (auto* client = MC::getClientInstance(); client != nullptr)
             client->grabMouse();
     }
 }
 
+void ClickGui::maintainMouseCapture() {
+    const auto window = MC::getWindowHandle();
+    ClipCursor(nullptr);
+    if (IsWindow(window) && GetCapture() != window)
+        SetCapture(window);
+    SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+}
+
 void ClickGui::render() {
+    if (g_Client.clickGuiOpened)
+        maintainMouseCapture();
+
     const auto screenContext = DrawUtils::getScreenContext();
     const auto tessellator = DrawUtils::getTessellator();
     const auto material = DrawUtils::getUIFillColor();

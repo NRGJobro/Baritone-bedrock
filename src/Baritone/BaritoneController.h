@@ -67,6 +67,7 @@ public:
     void resume();
     void tick();
     void postTick();
+    void suspendMovement();
     void beginVisualRotationRender();
     void endVisualRotationRender();
     void render(const std::vector<BlockPos>& miningTargets = {},
