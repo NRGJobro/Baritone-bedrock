@@ -6,6 +6,7 @@
 #include "MeshContext.h"
 #include "MeshData.h"
 #include "TexturePtr.h"
+#include "VertexFormat.h"
 
 namespace mce {
     struct BufferResourceService;
