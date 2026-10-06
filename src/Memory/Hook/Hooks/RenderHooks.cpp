@@ -18,28 +18,37 @@
 namespace {
 
 std::int64_t Camera_getPerspective(std::int64_t options) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&Camera_getPerspective);
     const auto value = original == nullptr ? 0 : original(options);
+    if (!callbackGuard.allowClientCode())
+        return value;
     if (auto* cameraTweaks = g_modMgr.getModule<CameraTweaksModule>(); cameraTweaks != nullptr)
         cameraTweaks->setPerspective(static_cast<int>(value));
     return value;
 }
 
 void CameraBlend_tick(MinecraftCamera::CameraComponent* camera, void* context, float deltaTime) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&CameraBlend_tick);
     if (original != nullptr)
         original(camera, context, deltaTime);
+    if (!callbackGuard.allowClientCode())
+        return;
     if (auto* cameraTweaks = g_modMgr.getModule<CameraTweaksModule>();
         cameraTweaks != nullptr && cameraTweaks->isEnabled())
         cameraTweaks->apply(camera);
 }
 
 void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext* renderContext) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&ScreenView_setupAndRender);
     if (original == nullptr)
         return;
     original(screenView, renderContext);
 
+    if (!callbackGuard.allowClientCode())
+        return;
     if (screenView == nullptr || renderContext == nullptr)
         return;
     const auto tree = screenView->getVisualTree();
@@ -88,17 +97,40 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
 }
 
 __int64 LevelRenderer_renderLevel(LevelRenderer* renderer, ScreenContext* screenContext, const __int64 frame) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&LevelRenderer_renderLevel);
     if (original == nullptr)
         return 0;
 
-    g_modMgr.onBeforeRenderLevel();
+    if (!callbackGuard.allowClientCode())
+        return original(renderer, screenContext, frame);
+
+    bool renderOverrideStarted = false;
+    try {
+        g_modMgr.onBeforeRenderLevel();
+        renderOverrideStarted = true;
+    } catch (...) {
+        // Never allow client-side UI/path rendering exceptions to cross the
+        // Minecraft render callback boundary.
+    }
+
     const auto result = original(renderer, screenContext, frame);
-    g_modMgr.onAfterRenderLevel();
+
+    if (renderOverrideStarted) {
+        try {
+            g_modMgr.onAfterRenderLevel();
+        } catch (...) {
+        }
+    }
+
     if (screenContext != nullptr) {
-        DrawUtils::update(screenContext);
-        LimiterTess::setTessellator3D(screenContext);
-        g_modMgr.onRenderLevel();
+        try {
+            DrawUtils::update(screenContext);
+            LimiterTess::setTessellator3D(screenContext);
+            g_modMgr.onRenderLevel();
+        } catch (...) {
+            // Rendering is optional. A bad frame must not take Minecraft down.
+        }
         LimiterTess::setTessellator3D(nullptr);
     }
     return result;
