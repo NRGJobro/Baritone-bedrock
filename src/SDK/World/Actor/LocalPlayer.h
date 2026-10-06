@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Player.h"
-#include "GameMode.h"
+
+class GameMode;
 
 class LocalPlayer : public Player {
 public:
