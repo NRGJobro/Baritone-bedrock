@@ -1,6 +1,11 @@
 #pragma once
 
-#include "Client/MinecraftGame.h"
+class MinecraftGame;
+class ClientInstance;
+class LevelRenderer;
+class GuiData;
+class BlockSource;
+class LocalPlayer;
 
 namespace MC {
     void init();
