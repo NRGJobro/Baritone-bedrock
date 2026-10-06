@@ -5,8 +5,12 @@
 
 namespace CameraTweaksMath {
 
-    inline bool acceptsScroll(const int perspective, const bool gameplay, const bool guiOpen) {
-        return (perspective == 1 || perspective == 2) && gameplay && !guiOpen;
+    inline bool acceptsScroll(
+        const int perspective,
+        const bool gameplay,
+        const bool guiOpen,
+        const bool controlHeld) {
+        return controlHeld && (perspective == 1 || perspective == 2) && gameplay && !guiOpen;
     }
 
     inline float scrollDistance(float distance, float step, const bool up) {

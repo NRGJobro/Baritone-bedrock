@@ -23,11 +23,12 @@ namespace {
 
 void cameraTweaksMatchPhaseBehavior() {
     using namespace CameraTweaksMath;
-    assert(!acceptsScroll(0, true, false));
-    assert(acceptsScroll(1, true, false));
-    assert(acceptsScroll(2, true, false));
-    assert(!acceptsScroll(1, false, false));
-    assert(!acceptsScroll(1, true, true));
+    assert(!acceptsScroll(0, true, false, true));
+    assert(acceptsScroll(1, true, false, true));
+    assert(acceptsScroll(2, true, false, true));
+    assert(!acceptsScroll(1, false, false, true));
+    assert(!acceptsScroll(1, true, true, true));
+    assert(!acceptsScroll(1, true, false, false));
     assert(scrollDistance(4.f, 0.5f, true) == 3.5f);
     assert(scrollDistance(4.f, 0.5f, false) == 4.5f);
     assert(scrollDistance(0.5f, 4.f, true) == 0.5f);

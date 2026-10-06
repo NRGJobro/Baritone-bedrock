@@ -358,8 +358,13 @@ bool feedMouseMessage(const UINT message, const WPARAM wParam) {
         ClickGui::onWheel(GET_WHEEL_DELTA_WPARAM(wParam) > 0, cancel);
         if (!cancel) {
             const auto cameraTweaks = g_modMgr.getModule<CameraTweaksModule>();
+            const bool controlHeld =
+                g_Client.keys[VK_CONTROL] ||
+                g_Client.keys[VK_LCONTROL] ||
+                g_Client.keys[VK_RCONTROL] ||
+                (GetKeyState(VK_CONTROL) & 0x8000) != 0;
             cancel = cameraTweaks != nullptr && cameraTweaks->isEnabled() &&
-                cameraTweaks->onWheel(GET_WHEEL_DELTA_WPARAM(wParam) > 0);
+                cameraTweaks->onWheel(GET_WHEEL_DELTA_WPARAM(wParam) > 0, controlHeld);
         }
         return cancel;
     }

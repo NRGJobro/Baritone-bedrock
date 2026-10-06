@@ -22,6 +22,6 @@ public:
 
     void setPerspective(int value);
     [[nodiscard]] int getPerspective() const;
-    bool onWheel(bool up);
+    bool onWheel(bool up, bool controlHeld);
     void apply(MinecraftCamera::CameraComponent* camera);
 };

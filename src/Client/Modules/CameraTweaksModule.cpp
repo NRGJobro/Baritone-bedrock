@@ -7,7 +7,7 @@
 #include "../../SDK/World/Actor/Components/RenderPositionComponent.h"
 #include "CameraTweaksMath.h"
 
-CameraTweaksModule::CameraTweaksModule() : Module("Scroll to move the third-person camera closer or farther from your player") {}
+CameraTweaksModule::CameraTweaksModule() : Module("Hold Ctrl and scroll to move the third-person camera closer or farther from your player") {}
 
 std::string CameraTweaksModule::getName() {
     return "CameraTweaks";
@@ -29,8 +29,12 @@ int CameraTweaksModule::getPerspective() const {
     return perspective.load(std::memory_order_relaxed);
 }
 
-bool CameraTweaksModule::onWheel(const bool up) {
-    if (MC::getLocalPlayer() == nullptr || !CameraTweaksMath::acceptsScroll(getPerspective(), g_Client.hudScreenActive.load(std::memory_order_acquire), g_Client.clickGuiOpened))
+bool CameraTweaksModule::onWheel(const bool up, const bool controlHeld) {
+    if (MC::getLocalPlayer() == nullptr || !CameraTweaksMath::acceptsScroll(
+        getPerspective(),
+        g_Client.hudScreenActive.load(std::memory_order_acquire),
+        g_Client.clickGuiOpened,
+        controlHeld))
         return false;
 
     distance = CameraTweaksMath::scrollDistance(distance, scrollStep, up);
