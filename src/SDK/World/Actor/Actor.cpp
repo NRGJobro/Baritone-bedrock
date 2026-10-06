@@ -1,5 +1,9 @@
 #include "Actor.h"
 
+#include "Components/ActorRotationComponent.h"
+#include "Components/MovementFlags.h"
+#include "Components/StateVectorComponent.h"
+#include "../Level/Level.h"
 #include "../../../Memory/Sig/SignatureManager.h"
 #include "../../../Utils/Utils.h"
 
