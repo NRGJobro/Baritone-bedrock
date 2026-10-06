@@ -1,5 +1,12 @@
 #include "Mesh.h"
 
+#include "ClientTexture.h"
+#include "../../Render/Resources/UIActorOffscreenCaptureDescription.h"
+#include "../../Render/Resources/UIThumbnailMeshOffscreenCaptureDescription.h"
+#include "../../Render/Resources/UIMeshOffscreenCaptureDescription.h"
+#include "../../Render/Resources/UIStructureVolumeOffscreenCaptureDescription.h"
+#include "../dragon/RenderMetadata.h"
+
 #include "../../../Memory/Sig/SignatureManager.h"
 #include "../../../Utils/Utils.h"
 
