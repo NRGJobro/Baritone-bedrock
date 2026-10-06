@@ -1,11 +1,6 @@
 #pragma once
 
 #include "../../../Utils/StaticVector.h"
-#include "../../Render/Resources/UIActorOffscreenCaptureDescription.h"
-#include "../../Render/Resources/UIThumbnailMeshOffscreenCaptureDescription.h"
-#include "../../Render/Resources/UIMeshOffscreenCaptureDescription.h"
-#include "../../Render/Resources/UIStructureVolumeOffscreenCaptureDescription.h"
-#include "../dragon/RenderMetadata.h"
 #include "BufferResourceService.h"
 #include "IndexBufferContainer.h"
 #include "MaterialPtr.h"
