@@ -1,8 +1,9 @@
 #pragma once
 
-#include "ClientInstance.h"
-#include "Font/FontRepository.h"
-#include "Font/Fonts.h"
+class ClientInstance;
+class FontRepository;
+class Font;
+enum class Fonts;
 
 class MinecraftGame {
 public:
