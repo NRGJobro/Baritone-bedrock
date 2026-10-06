@@ -93,6 +93,7 @@ public:
         bool continueMode = false);
     void startTargets(std::vector<BlockPos> targets);
     void cancel(BaritoneController& controller);
+    void resetForWorldChange(BaritoneController& controller);
     void tick(BaritoneController& controller);
 
     [[nodiscard]] bool isActive() const;
