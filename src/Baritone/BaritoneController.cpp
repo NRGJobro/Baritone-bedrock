@@ -138,6 +138,24 @@ void BaritoneController::stop() {
     state = ControllerState::Idle;
 }
 
+void BaritoneController::resetForWorldChange() {
+    pathNeedsContinuation = false;
+    planningAhead = false;
+    aheadRetryCooldown = 0;
+    nextPlanningIndex = 0;
+    pathfinder.cancel();
+    executor.stop(nullptr);
+    protectedMiningSupports.clear();
+    goal.reset();
+    replanGuard = {};
+    routeStage = RouteStage::Walk;
+    calculationStart = {};
+    stuckReplans = 0;
+    lastReplanReason.clear();
+    stateBeforePause = ControllerState::Idle;
+    state = ControllerState::Idle;
+}
+
 void BaritoneController::pause() {
     if (state != ControllerState::Calculating && state != ControllerState::Executing)
         return;
