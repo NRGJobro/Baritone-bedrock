@@ -51,6 +51,19 @@ void ElytraProcess::cancel(LocalPlayer* player) {
     rotationPrimed = false;
 }
 
+void ElytraProcess::resetForWorldChange() {
+    active = false;
+    sGliding = false;
+    sYaw = 0.f;
+    sPitch = 0.f;
+    target = {};
+    rotationPrimed = false;
+    rocketCooldown = 0;
+    takeoffTicks = 0;
+    savedHotbarSlot = -1;
+    pendingMessage.reset();
+}
+
 void ElytraProcess::suspend(LocalPlayer* player) {
     restoreHotbar(player != nullptr ? player : MC::getLocalPlayer());
     sGliding = false;
