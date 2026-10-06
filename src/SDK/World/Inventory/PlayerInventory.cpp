@@ -1,5 +1,7 @@
 #include "PlayerInventory.h"
 
+#include "Inventory.h"
+
 int PlayerInventory::getSelectedHotbarSlot() {
     return hat::member_at<int>(this, 0x10);
 }
