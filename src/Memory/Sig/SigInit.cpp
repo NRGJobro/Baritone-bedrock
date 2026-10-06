@@ -26,6 +26,10 @@ void SigInit::initHooks() {
         "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 89 D3 48 89 CE 48 8B 01");
     ADD_SIG("LevelRendererHook::levelRendererHookSig",
         "E8 ? ? ? ? 45 31 E4 48 83 BE");
+    ADD_SIG("CameraOriginHook::tickSig",
+        "41 57 41 56 41 54 56 57 55 53 48 81 EC ? ? ? ? 44 0F 29 BC 24 ? ? ? ? 44 0F 29 B4 24 ? ? ? ? 44 0F 29 AC 24 ? ? ? ? 44 0F 29 A4 24 ? ? ? ? 44 0F 29 9C 24 ? ? ? ? 44 0F 29 94 24 ? ? ? ? 44 0F 29 8C 24 ? ? ? ? 44 0F 29 44 24 ? 0F 29 7C 24 ? 0F 29 74 24 ? 0F 28 F2");
+    ADD_SIG("PerspectiveHook::perspectiveSig",
+        "48 83 EC 38 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 ? 48 8B 01 48 8B 40 08 48 8D 54 24 ? 41 B8 03 00 00 00");
     ADD_SIG("GammaHook::gammaSig",
         "48 83 EC 38 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 ? 48 8B 01 48 8B 40 08 48 8D 54 24 ? 41 B8 32 00 00 00");
     ADD_SIG("WorldNotShowingMenusHook::worldMenusSig",

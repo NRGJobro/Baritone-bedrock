@@ -11,11 +11,6 @@ public:
     static void update(ScreenContext* ctx);
 
     static mce::MaterialPtr* getUIFillColor();
-    static mce::MaterialPtr* getUITextured();
-    static mce::MaterialPtr* getNameTagDepthTested();
-    static mce::MaterialPtr* getSignText();
-    static mce::MaterialPtr* getUITextureAndColor();
-    static mce::MaterialPtr* getFullscreenCubeOverlayBlend();
     static mce::MaterialPtr* getSelectionOverlay();
 
     static ScreenContext* getScreenContext();

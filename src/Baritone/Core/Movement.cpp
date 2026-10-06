@@ -63,6 +63,37 @@ bool safeBridgeWater(const IWorld& world, const BlockPos& supportPos) {
     return support.loaded && support.liquid && !support.solid && !support.hazard;
 }
 
+bool hasNaturalExit(const IWorld& world, const BlockPos& from,
+    const PathOptions& options) {
+    static constexpr std::array<std::pair<int, int>, 8> directions{{
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+        {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    }};
+    for (const auto [dx, dz] : directions) {
+        const bool diagonal = dx != 0 && dz != 0;
+        if (diagonal && !options.allowDiagonal)
+            continue;
+        const auto adjacent = from.offset(dx, 0, dz);
+        if (MovementGenerator::canStandAt(world, adjacent, options))
+            return true;
+        if (!diagonal && options.allowAscend &&
+            MovementGenerator::canStandAt(world, adjacent.offset(0, 1, 0), options) &&
+            MovementGenerator::canOccupy(world, from.offset(0, 1, 0), options))
+            return true;
+        if (!diagonal && options.allowFall &&
+            MovementGenerator::canOccupy(world, adjacent, options)) {
+            for (int drop = 1; drop <= options.maxFallHeight; ++drop) {
+                const auto landing = adjacent.offset(0, -drop, 0);
+                if (!MovementGenerator::canOccupy(world, landing.offset(0, 1, 0), options))
+                    break;
+                if (MovementGenerator::canStandAt(world, landing, options))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 bool MovementGenerator::canDropToWater(const IWorld& world, const BlockPos& from, const BlockPos& to) {
@@ -80,7 +111,7 @@ bool MovementGenerator::canDropToWater(const IWorld& world, const BlockPos& from
 bool MovementGenerator::isPlannedBreakCell(const BlockPos& from, const BlockPos& to,
     const MovementType type, const BlockPos& cell) {
     if (type == MovementType::BreakDown)
-        return cell == to;
+        return cell == to || cell == from.offset(0, 1, 0);
     if (type == MovementType::BreakTraverse || type == MovementType::BreakAscend ||
         type == MovementType::BreakDescend) {
         if (cell == to || cell == to.offset(0, 1, 0))
@@ -293,13 +324,36 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
     // same X/Z column, provided the next floor is loaded, solid, and safe.
     // Fluid exposure, hazards, and unbreakable blocks are rejected by the
     // same break/support checks used by every other mining transition.
-    if (options.miningMode && options.allowFall && options.allowBreak && !fromWater) {
+    // Straight-down excavation is a mining operation, not a generic terrain
+    // fallback. Ordinary navigation may break a wall that genuinely blocks a
+    // route, but it must not turn a walkable surface into a shortcut shaft.
+    const bool isolatedFooting = !options.miningMode && !options.preferVerticalMining &&
+        !hasNaturalExit(world, from, options);
+    if (options.allowFall && options.allowBreak && !fromWater &&
+        (options.miningMode || options.preferVerticalMining || isolatedFooting)) {
         const auto down = from.offset(0, -1, 0);
-        const double breakCost = breakCostToOccupy(world, down, options);
+        // Only the new floor is removed. The destination's head cell is the
+        // current feet cell and is necessarily occupied/cleared before this
+        // transition; charging its stale world block again made every deeper
+        // shaft step progressively more expensive and pushed A* sideways.
+        const double destinationCost = breakCostForBlock(world, down, options);
+        const double breakCost = destinationCost;
         if (hasSafeSupport(world, down) && breakCost > 0.0 &&
             breakCost < action_costs::costInf) {
             result.push_back({down, MovementType::BreakDown,
                 action_costs::fallTicks(1) + action_costs::centerAfterFall + breakCost});
+            if (options.preferVerticalMining &&
+                from.y > options.preferredVerticalMiningY) {
+                // Once a safe shaft is available, commit to it until the goal
+                // depth. Merely adding cost lets A* step sideways off the
+                // canopy to escape the preference, which is exactly the
+                // walk-off failure this policy exists to prevent. If the floor
+                // cannot be safely broken, BreakDown is never added and every
+                // normal alternative remains available.
+                std::erase_if(result, [](const Movement& movement) {
+                    return movement.type != MovementType::BreakDown;
+                });
+            }
         }
     }
 
@@ -407,6 +461,20 @@ void MovementGenerator::getMovements(const IWorld& world, const BlockPos& from,
             // If the adjacent block is walkable, normal traverse is safer.
             if (canStandAt(world, adjacent, options) || !canOccupy(world, adjacent, options) ||
                 !passable(world.getBlock(adjacent.offset(0, 2, 0)), options))
+                continue;
+
+            // Do not jump over an ordinary dip. If the first gap column has a
+            // safe floor one or two blocks below, descending, walking across,
+            // and ascending is the natural route and gives the executor much
+            // more room to stop. Reserve parkour for genuinely deep gaps.
+            bool shallowGap = false;
+            for (int drop = 1; drop <= 2; ++drop) {
+                if (canStandAt(world, adjacent.offset(0, -drop, 0), options)) {
+                    shallowGap = true;
+                    break;
+                }
+            }
+            if (shallowGap)
                 continue;
 
             for (int distance = 2; distance <= maxDistance; ++distance) {

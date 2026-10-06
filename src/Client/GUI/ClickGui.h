@@ -13,8 +13,9 @@ public:
 
 private:
     static inline bool builtMeshes = false;
-    static inline mce::Mesh overlayMesh{}, shadowMesh{}, bgMesh{}, sidebarMesh{}, navMesh{}, lineMesh{};
-    static inline mce::Mesh modMesh{}, modHoverMesh{}, cardAccentMesh{}, settingsMesh{}, enabledStateMesh{}, circle{};
+    static inline mce::Mesh overlayMesh{}, shellMesh{}, headerMesh{}, sidebarMesh{};
+    static inline mce::Mesh redlineMesh{}, gaugeMesh{}, cardMesh{}, cardHoverMesh{}, cardActiveMesh{};
+    static inline mce::Mesh settingsMesh{}, toggleTrackMesh{}, knobMesh{};
 
     static void buildMeshes();
 };

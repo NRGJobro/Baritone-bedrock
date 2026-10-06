@@ -37,11 +37,73 @@ endif()
 
 include(include/FetchLibraries.cmake)
 
-file(GLOB_RECURSE LIMITER_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
+set(LIMITER_SOURCES
+    src/main.cpp
+    src/Client.cpp
+    src/Client/GUI/ClickGui.cpp
+    src/Client/Modules/Module.cpp
+    src/Client/Modules/ModuleManager.cpp
+    src/Client/Modules/LimiterModule.cpp
+    src/Client/Modules/CameraTweaksModule.cpp
+    src/Client/Modules/FullBrightModule.cpp
+    src/Client/Modules/GuiMoveModule.cpp
+    src/Memory/Hook/Hook.cpp
+    src/Memory/Hook/HookManager.cpp
+    src/Memory/Hook/Hooks/ClientHooks.cpp
+    src/Memory/Hook/Hooks/RenderHooks.cpp
+    src/Memory/Sig/SigInit.cpp
+    src/Memory/Sig/Signature.cpp
+    src/Memory/Sig/SignatureManager.cpp
+    src/Baritone/BaritoneController.cpp
+    src/Baritone/Bedrock/BedrockBlockBreaking.cpp
+    src/Baritone/Bedrock/BedrockWorld.cpp
+    src/Baritone/Bedrock/ElytraProcess.cpp
+    src/Baritone/Bedrock/ExploreProcess.cpp
+    src/Baritone/Bedrock/MiningProcess.cpp
+    src/Baritone/Bedrock/PathExecutor.cpp
+    src/Baritone/Bedrock/PathRenderer.cpp
+    src/Baritone/Core/Goal.cpp
+    src/Baritone/Core/Movement.cpp
+    src/Baritone/Core/Pathfinder.cpp
+    src/SDK/MC.cpp
+    src/SDK/Client/ClientInstance.cpp
+    src/SDK/Client/MinecraftGame.cpp
+    src/SDK/Client/Font/Font.cpp
+    src/SDK/Client/GUI/GuiData.cpp
+    src/SDK/Client/MCE/Color.cpp
+    src/SDK/Client/MCE/MaterialPtr.cpp
+    src/SDK/Client/MCE/Mesh.cpp
+    src/SDK/Client/MCE/MeshContext.cpp
+    src/SDK/Client/MCE/MeshData.cpp
+    src/SDK/Network/Packet/Packet.cpp
+    src/SDK/Render/Level/LevelRenderer.cpp
+    src/SDK/Render/Level/LevelRendererPlayer.cpp
+    src/SDK/Render/MeshHelpers.cpp
+    src/SDK/Render/MinecraftUIRenderContext.cpp
+    src/SDK/Render/ScreenContext.cpp
+    src/SDK/Render/Tessellator.cpp
+    src/SDK/Screen/ScreenView.cpp
+    src/SDK/Screen/UIControl.cpp
+    src/SDK/Screen/VisualTree.cpp
+    src/SDK/World/Actor/Actor.cpp
+    src/SDK/World/Actor/Player.cpp
+    src/SDK/World/Block/Block.cpp
+    src/SDK/World/Block/BlockLegacy.cpp
+    src/SDK/World/BlockSource.cpp
+    src/SDK/World/Inventory/Inventory.cpp
+    src/SDK/World/Inventory/PlayerInventory.cpp
+    src/SDK/World/Item/ItemStackBase.cpp
+    src/SDK/World/Level/Level.cpp
+    src/Utils/DrawUtils.cpp
+    src/Utils/LimiterTess.cpp
+    src/Utils/Logger.cpp
+    src/Utils/TimeUtils.cpp
+    src/Utils/Utils.cpp
+)
 
 add_library(Limiter SHARED ${LIMITER_SOURCES})
 target_compile_definitions(Limiter PRIVATE NOMINMAX _USE_STD_VECTOR_ALGORITHMS=0)
-target_link_libraries(Limiter PRIVATE minhook libhat EnTT::EnTT magic_enum spdlog::spdlog glm dwmapi.lib)
+target_link_libraries(Limiter PRIVATE minhook libhat EnTT::EnTT magic_enum spdlog::spdlog glm)
 target_precompile_headers(Limiter PRIVATE PCH.h)
 set_target_properties(Limiter PROPERTIES
     UNITY_BUILD ON

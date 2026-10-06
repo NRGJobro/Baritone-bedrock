@@ -1,5 +1,5 @@
 #include "Client.h"
-#include "Client/Module/ModuleManager.h"
+#include "Client/Modules/ModuleManager.h"
 #include "Memory/Hook/HookManager.h"
 #include "Memory/Sig/SigInit.h"
 #include "Memory/Sig/SignatureManager.h"

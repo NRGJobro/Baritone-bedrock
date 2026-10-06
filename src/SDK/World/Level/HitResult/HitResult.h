@@ -19,6 +19,4 @@ struct HitResult {
     glm::ivec3 liquid;
     glm::vec3 liquidPos;
     bool indirectHit;
-
-    class Actor* getEntity() const;
 };

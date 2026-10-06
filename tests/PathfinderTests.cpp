@@ -4,11 +4,14 @@
 #include "Baritone/Core/Pathfinder.h"
 #include "Baritone/Core/NavigationPolicy.h"
 #include "Baritone/Bedrock/BedrockPhysics.h"
+#include "Baritone/Bedrock/MovementInput.h"
+#include "Client/Modules/CameraTweaksMath.h"
 
 #include <algorithm>
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <limits>
 #include <cmath>
 #include <cstdlib>
 #ifdef _MSC_VER
@@ -17,6 +20,29 @@
 #include <unordered_set>
 
 namespace {
+
+void cameraTweaksMatchPhaseBehavior() {
+    using namespace CameraTweaksMath;
+    assert(!acceptsScroll(0, true, false));
+    assert(acceptsScroll(1, true, false));
+    assert(acceptsScroll(2, true, false));
+    assert(!acceptsScroll(1, false, false));
+    assert(!acceptsScroll(1, true, true));
+    assert(scrollDistance(4.f, 0.5f, true) == 3.5f);
+    assert(scrollDistance(4.f, 0.5f, false) == 4.5f);
+    assert(scrollDistance(0.5f, 4.f, true) == 0.5f);
+    assert(scrollDistance(32.f, 4.f, false) == 32.f);
+    assert(std::isfinite(scrollDistance(
+        std::numeric_limits<float>::quiet_NaN(), 0.5f, true)));
+    float current = 4.f;
+    for (int i = 0; i < 120; ++i) {
+        const float next = approach(current, 8.f, 1.f / 60.f);
+        assert(next >= current && next <= 8.f);
+        current = next;
+    }
+    assert(current > 7.99f);
+    assert(approach(4.f, 8.f, 0.f) == 4.f);
+}
 
 class FakeWorld final : public baritone::IWorld {
 public:
@@ -758,6 +784,7 @@ void navigationUsesBoundedTerrainFallbacks() {
     assert(!walk.allowBreak && !walk.allowBridge);
     assert(dig.allowBreak && !dig.allowBridge);
     assert(build.allowBreak && build.allowBridge);
+    assert(walk.maxExpandedNodes == 24000 && walk.nodesPerTick == 160);
     assert(build.maxExpandedNodes == 4000 && build.nodesPerTick == 96);
     assert(saved.maxExpandedNodes == 200000 && !saved.allowBreak);
 
@@ -879,6 +906,82 @@ void miningCanDigAOneWideVerticalShaft() {
         return movement.destination == baritone::BlockPos{0, -1, 0} &&
             movement.type == baritone::MovementType::BreakDown;
     }));
+    assert(baritone::MovementGenerator::isPlannedBreakCell(
+        {0, 0, 0}, {0, -1, 0}, baritone::MovementType::BreakDown, {0, 1, 0}));
+
+    // Ordinary navigation may break obstructions, but it must not excavate a
+    // walkable floor simply because the eventual goal is lower.
+    options.miningMode = false;
+    world.solid.insert({0, 1, 0});
+    const auto ordinaryBreakMoves = baritone::MovementGenerator::getMovements(
+        world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(ordinaryBreakMoves, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{0, -1, 0} &&
+            movement.type == baritone::MovementType::BreakDown;
+    }));
+}
+
+void acceptsOnlySafeAlignedFallLandings() {
+    using baritone::validSupportedFallLanding;
+    assert(validSupportedFallLanding(true, 0.f, 0.30f, 0.72f));
+    assert(validSupportedFallLanding(true, 0.85f, 2.25f, 0.f));
+    assert(!validSupportedFallLanding(false, 0.f, 1.f, 0.f));
+    assert(!validSupportedFallLanding(true, 0.86f, 1.f, 0.f));
+    assert(!validSupportedFallLanding(true, 0.f, 0.29f, 0.f));
+    assert(!validSupportedFallLanding(true, 0.f, 2.26f, 0.f));
+    assert(!validSupportedFallLanding(true, 0.f, 1.f, 0.73f));
+}
+
+void ordinaryNavigationMinesDownOnlyFromIsolatedPillars() {
+    FakeWorld world;
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowFall = true;
+    options.miningMode = false;
+
+    const auto surfaceMoves = baritone::MovementGenerator::getMovements(
+        world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(surfaceMoves, [](const auto& movement) {
+        return movement.type == baritone::MovementType::BreakDown;
+    }));
+
+    for (int y = 0; y <= 4; ++y)
+        world.solid.insert({0, y, 0});
+    const auto pillarMoves = baritone::MovementGenerator::getMovements(
+        world, {0, 5, 0}, options);
+    assert(std::ranges::any_of(pillarMoves, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{0, 4, 0} &&
+            movement.type == baritone::MovementType::BreakDown;
+    }));
+}
+
+void walksThroughShallowDipInsteadOfParkour() {
+    FakeWorld world;
+    world.solid.erase({1, -1, 0});
+    world.solid.insert({1, -2, 0});
+
+    baritone::PathOptions options;
+    options.allowDiagonal = false;
+    options.allowParkour = true;
+    options.maxParkourDistance = 2;
+    const auto movements = baritone::MovementGenerator::getMovements(
+        world, {0, 0, 0}, options);
+    assert(std::ranges::none_of(movements, [](const auto& movement) {
+        return movement.type == baritone::MovementType::Parkour;
+    }));
+    assert(std::ranges::any_of(movements, [](const auto& movement) {
+        return movement.destination == baritone::BlockPos{1, -1, 0} &&
+            movement.type == baritone::MovementType::Descend;
+    }));
+}
+
+void keepsRuntimeParkourCameraIndependent() {
+    // The live controller caps parkour at the one-gap form because it preserves
+    // the player's real camera. Longer variants require aligned forward sprint
+    // and are deliberately routed around at runtime.
+    assert(baritone::cameraIndependentParkourDistance(4) == 2);
+    assert(baritone::cameraIndependentParkourDistance(3) == 2);
+    assert(baritone::cameraIndependentParkourDistance(2) == 2);
 }
 
 void miningBuildsOnlyAcrossSafeWater() {
@@ -939,6 +1042,159 @@ void modelsBedrockPlayerPhysics() {
     assert(projectedAirDisplacement(0.28f, 1.f, true, false, 5) >
         projectedAirDisplacement(0.28f, 0.f, true, false, 5));
     assert(ticksUntilLandingPlane(0.f, jumpVelocity, 0.f) > 1);
+
+    // Shaft centering may release input to coast, but must never command a
+    // reversal that can send the player toward the opposite edge.
+    assert(shaftCenterInput(0.50f, 0.f) > 0.f);
+    assert(shaftCenterInput(0.50f, -0.20f) > 0.f);
+    assert(shaftCenterInput(0.50f, 0.20f) == 0.f);
+    assert(shaftCenterInput(shaftCenteredAxisTolerance, 0.f) == 0.f);
+    assert(shaftFootprintCentered(0.10f, -0.17f));
+    assert(shaftFootprintCentered(shaftCenteredAxisTolerance,
+        shaftCenteredAxisTolerance));
+    assert(!shaftFootprintCentered(0.19f, 0.f));
+    assert(!shaftFootprintCentered(0.f, -0.19f));
+    for (int distanceStep = 0; distanceStep <= 100; ++distanceStep) {
+        for (int speedStep = -100; speedStep <= 100; ++speedStep) {
+            const float input = shaftCenterInput(
+                static_cast<float>(distanceStep) / 100.f,
+                static_cast<float>(speedStep) / 500.f);
+            assert(std::isfinite(input));
+            assert(input >= 0.f && input <= 0.32f);
+        }
+    }
+
+    // A moving descent must choose the same path-axis correction regardless
+    // of camera yaw. Exercise one- through four-block drops at both walking
+    // and sprint-entry speeds and require a supported-block landing corridor.
+    for (const float incomingSpeed : {0.21585f, 0.28060f}) {
+        for (int height = 1; height <= 4; ++height) {
+            const bool cautiousDrop = height >= 2;
+            const float entryTarget = cautiousDrop ? 0.06f : 0.10f;
+            const float landingTarget = cautiousDrop ? 0.80f : 0.90f;
+            float y = static_cast<float>(height);
+            float verticalVelocity = 0.f;
+            float progress = 0.30f;
+            // The last supported tick regulates a running approach before the
+            // edge. This must tame even sprint momentum using ordinary input,
+            // without directly changing velocity.
+            const float approachInput = groundInputForTargetVelocity(incomingSpeed, entryTarget);
+            float alongVelocity = nextGroundVelocity(
+                incomingSpeed, approachInput, false, false);
+            assert(std::abs(alongVelocity - entryTarget) < 0.0001f);
+            for (int tick = 0; tick < 40 && y > 0.05f; ++tick) {
+                const int remainingTicks = ticksUntilHeight(y, verticalVelocity, 0.f, 40);
+                const float input = fallLandingInput(
+                    progress, alongVelocity, 1.f, remainingTicks,
+                    landingTarget);
+                assert(input >= 0.f); // never produce a visible reverse tap
+                alongVelocity = alongVelocity * horizontalAirDrag +
+                    input * walkAirAcceleration;
+                progress += alongVelocity;
+                verticalVelocity = (verticalVelocity - gravity) * verticalDrag;
+                y += verticalVelocity;
+            }
+            assert(progress >= (cautiousDrop ? 0.68f : 0.70f));
+            assert(progress <= (cautiousDrop ? 0.92f : 1.10f));
+        }
+    }
+    assert(!needsCautiousDropApproach(1, false, 0.8f, 0.28f, 1.f, 12));
+    assert(!needsCautiousDropApproach(4, true, 0.8f, 0.28f, 1.f, 12));
+    assert(needsCautiousDropApproach(2, false, 0.8f, 0.28f, 1.f, 8));
+
+    // Multi-block drops use digital forward pulses on the supported block,
+    // then release all air input. Both walk and sprint approaches must reach
+    // the edge at a controlled speed without ever requesting reverse input.
+    for (const float incomingSpeed : {0.21585f, 0.28060f}) {
+        float speed = incomingSpeed;
+        float progress = 0.f;
+        for (int tick = 0; tick < 30 && progress < 0.80f; ++tick) {
+            const bool sneaking = progress < cautiousDropSneakReleaseProgress;
+            const float input = cautiousDropGroundInput(progress, speed);
+            assert(input == 0.f || input == 1.f);
+            speed = nextGroundVelocity(speed, input, false, sneaking);
+            progress += speed;
+        }
+        assert(progress >= 0.80f);
+        assert(speed <= 0.045f);
+        for (int height = 2; height <= 4; ++height)
+            assert(dropAirInput(height, progress, speed, 1.f, 12, 0.80f) == 0.f);
+    }
+
+    // Even an unrecoverably fast airborne entry now coasts rather than
+    // producing a robotic one-tick backward input.
+    assert(fallLandingInput(0.75f, 0.30f, 1.f, 8) == 0.f);
+}
+
+void miningDescendsBeforeCrossingExposedTerrain() {
+    FakeWorld world;
+    // A solid mass below an exposed starting platform gives the planner both
+    // choices: walk toward X first, or open a safe vertical shaft and tunnel
+    // after reaching the target depth.
+    for (int y = -6; y <= -1; ++y) {
+        for (int x = -1; x <= 7; ++x) {
+            for (int z = -1; z <= 1; ++z)
+                world.solid.insert({x, y, z});
+        }
+    }
+
+    baritone::PathOptions options;
+    options.allowBreak = true;
+    options.allowFall = true;
+    options.allowWater = false;
+    options.allowParkour = false;
+    options.allowBridge = false;
+    options.miningMode = false;
+    options.preferVerticalMining = true;
+    options.preferredVerticalMiningY = -4;
+    options.heuristicWeight = 1.75;
+    baritone::Pathfinder finder;
+    finder.begin({0, 0, 0},
+        std::make_shared<baritone::GoalGetToBlock>(baritone::BlockPos{6, -4, 0}), options);
+    assert(run(finder, world) == baritone::SearchStatus::Found);
+    const auto& path = finder.getPath();
+    assert(path.size() > 4);
+    for (std::size_t index = 1; index <= 4; ++index) {
+        assert(path[index].movement == baritone::MovementType::BreakDown);
+        assert(path[index].pos.x == 0 && path[index].pos.z == 0);
+    }
+
+    const baritone::BlockPos source{0, 0, 0};
+    const baritone::BlockPos destination{0, -1, 0};
+    assert(baritone::validBreakDownGroundCell(source, destination, source));
+    assert(baritone::validBreakDownGroundCell(source, destination, destination));
+    assert(!baritone::validBreakDownGroundCell(source, destination, {1, -1, 0}));
+    assert(baritone::requiresBreakDownEntryCentering(baritone::MovementType::Traverse));
+    assert(!baritone::requiresBreakDownEntryCentering(baritone::MovementType::BreakDown));
+}
+
+void emitsVanillaSafeMovementInput() {
+    using namespace baritone::movement_input;
+
+    // Stress every quadrant, over-range diagonals, fractional steering, and
+    // the exact zero crossings used as path correction settles.
+    for (int x = -200; x <= 200; ++x) {
+        for (int y = -200; y <= 200; ++y) {
+            const auto movement = sanitize({x / 100.f, y / 100.f});
+            assert(std::isfinite(movement.x));
+            assert(std::isfinite(movement.y));
+            assert(std::sqrt(movement.x * movement.x + movement.y * movement.y) <= 1.00001f);
+
+            const auto state = directions(movement);
+            assert(state.up == (movement.y > 0.f));
+            assert(state.down == (movement.y < 0.f));
+            assert(state.left == (movement.x < 0.f));
+            assert(state.right == (movement.x > 0.f));
+            assert(!(state.up && state.down));
+            assert(!(state.left && state.right));
+        }
+    }
+
+    assert(sanitize({0.019f, -0.019f}) == Vector{});
+    assert(sanitize({1.f, 1.f}).x > 0.70f);
+    assert(sanitize({1.f, 1.f}).y > 0.70f);
+    assert(sanitize({std::numeric_limits<float>::infinity(), 1.f}) == Vector{});
+    assert(sanitize({std::numeric_limits<float>::quiet_NaN(), 1.f}) == Vector{});
 }
 
 } // namespace
@@ -950,6 +1206,7 @@ int main() {
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
+    cameraTweaksMatchPhaseBehavior();
     findsStraightPath();
     continuationPreservesCommittedRoute();
     jumpLandingKeepsExistingRoute();
@@ -971,8 +1228,10 @@ int main() {
     exposesMovementCostsForEta();
     supportsAdvancedBaritoneGoals();
     crossesOneBlockGapWithParkour();
+    walksThroughShallowDipInsteadOfParkour();
     respectsParkourToggle();
     crossesThreeBlockGapWithSprintParkour();
+    keepsRuntimeParkourCameraIndependent();
     crossesFourBlockGapWithBridgeFallback();
     crossesTenBlockGapAtConfiguredBridgeLimit();
     discoversEdgeConnectedDiagonalBridge();
@@ -993,8 +1252,12 @@ int main() {
     miningDisablesWaterDrops();
     miningRefusesBreaksThatWouldReleaseLiquid();
     miningCanDigAOneWideVerticalShaft();
+    acceptsOnlySafeAlignedFallLandings();
+    ordinaryNavigationMinesDownOnlyFromIsolatedPillars();
+    miningDescendsBeforeCrossingExposedTerrain();
     miningBuildsOnlyAcrossSafeWater();
     modelsBedrockPlayerPhysics();
+    emitsVanillaSafeMovementInput();
     std::cout << "Limiter core tests passed\n";
     return 0;
 }

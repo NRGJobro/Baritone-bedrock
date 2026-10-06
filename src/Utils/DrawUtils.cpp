@@ -8,11 +8,6 @@
 constexpr float RAD_DEG = 3.1415927f / 180.f;
 
 static mce::MaterialPtr* uiFillColor;
-static mce::MaterialPtr* uiTextured;
-static mce::MaterialPtr* nameTagDepthTested;
-static mce::MaterialPtr* signText;
-static mce::MaterialPtr* uiTextureAndColor;
-static mce::MaterialPtr* fullscreenCubeOverlayBlend;
 static mce::MaterialPtr* selectionOverlay;
 
 static MinecraftUIRenderContext* renderCtx;
@@ -36,21 +31,6 @@ void DrawUtils::update(ScreenContext* ctx) {
     if (uiFillColor == nullptr)
         uiFillColor = mce::MaterialPtr::createMaterial("ui_fill_color");
 
-    if (uiTextured == nullptr)
-        uiTextured = mce::MaterialPtr::createMaterial("ui_textured");
-
-    if (nameTagDepthTested == nullptr)
-        nameTagDepthTested = mce::MaterialPtr::createMaterial("name_tag_depth_tested");
-
-    if (signText == nullptr)
-        signText = mce::MaterialPtr::createMaterial("sign_text");
-
-    if (uiTextureAndColor == nullptr)
-        uiTextureAndColor = mce::MaterialPtr::createMaterial("ui_texture_and_color");
-
-    if (fullscreenCubeOverlayBlend == nullptr)
-        fullscreenCubeOverlayBlend = mce::MaterialPtr::createMaterial("fullscreen_cube_overlay_blend");
-
     if (selectionOverlay == nullptr)
         selectionOverlay = mce::MaterialPtr::createMaterial("selection_overlay");
 }
@@ -59,28 +39,8 @@ mce::MaterialPtr* DrawUtils::getUIFillColor() {
     return uiFillColor;
 }
 
-mce::MaterialPtr* DrawUtils::getUITextured() {
-    return uiTextured;
-}
-
-mce::MaterialPtr* DrawUtils::getNameTagDepthTested() {
-    return nameTagDepthTested;
-}
-
-mce::MaterialPtr* DrawUtils::getSignText() {
-    return signText;
-}
-
 ScreenContext* DrawUtils::getScreenContext() {
     return screenContext;
-}
-
-mce::MaterialPtr* DrawUtils::getUITextureAndColor() {
-    return uiTextureAndColor;
-}
-
-mce::MaterialPtr* DrawUtils::getFullscreenCubeOverlayBlend() {
-    return fullscreenCubeOverlayBlend;
 }
 
 mce::MaterialPtr* DrawUtils::getSelectionOverlay() {

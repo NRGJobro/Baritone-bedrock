@@ -2,7 +2,7 @@
 
 #include "ClientResourcePointer.h"
 #include "Texture.h"
-#include "../Dragon/ClientTexture.h"
+#include "../dragon/ClientTexture.h"
 
 namespace mce {
     struct ClientTexture : ClientResourcePointer<std::variant<std::monostate, Texture, dragon::res::ClientTexture>> { };

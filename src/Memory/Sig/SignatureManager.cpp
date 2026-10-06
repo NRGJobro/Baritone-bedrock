@@ -17,7 +17,3 @@ void SignatureManager::scanAll() {
     for (auto &future : futures)
         future.get();
 }
-
-void SignatureManager::clear() {
-    sigs.clear();
-}

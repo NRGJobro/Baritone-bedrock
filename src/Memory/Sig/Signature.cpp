@@ -10,7 +10,3 @@ void Signature::find() {
 bool Signature::isScanned() const {
     return this->scanned;
 }
-
-bool Signature::isValid() const {
-    return this->addr != 0;
-}

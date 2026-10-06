@@ -13,8 +13,8 @@ namespace mce {
         ImageUsage usage;
         Blob imageData;
 
-        Image& operator=(const Image& other);
-        [[nodiscard]] Image clone() const;
-        [[nodiscard]] bool isEmpty() const;
+        Image() = default;
+        Image(const Image&) = delete;
+        Image& operator=(const Image&) = delete;
     };
 }

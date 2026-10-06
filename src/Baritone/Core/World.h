@@ -3,6 +3,7 @@
 #include "BlockPos.h"
 
 #include <cstddef>
+#include <limits>
 
 namespace baritone {
 
@@ -38,6 +39,10 @@ struct PathOptions {
     // Mining uses a bounded local search and should not expand into the large
     // bridge fallback budget used by ordinary navigation.
     bool miningMode = false;
+    // Prefer reaching a lower mining goal through a centered same-column
+    // shaft instead of walking across exposed terrain before descending.
+    bool preferVerticalMining = false;
+    int preferredVerticalMiningY = std::numeric_limits<int>::min();
     // First search without construction; if that search exhausts, the
     // controller retries with bridge transitions enabled.
     bool bridgeOnlyAfterFailure = true;

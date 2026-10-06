@@ -1,9 +1,9 @@
 #pragma once
 
 #include "../cg/ImageType.h"
-#include "../mce/Image.h"
-#include "../mce/TextureFormat.h"
-#include "../mce/TextureUtil.h"
+#include "../MCE/Image.h"
+#include "../MCE/TextureFormat.h"
+#include "../MCE/TextureUtil.h"
 #include "ColorSpace.h"
 
 namespace cg {

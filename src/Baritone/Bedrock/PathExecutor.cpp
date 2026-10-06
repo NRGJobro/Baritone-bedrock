@@ -4,6 +4,7 @@
 #include "BedrockPhysics.h"
 #include "BedrockBlockBreaking.h"
 #include "BedrockWorld.h"
+#include "MovementInput.h"
 #include "../../SDK/MC.h"
 #include "../../SDK/Client/Input/MoveInputComponent.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
@@ -250,36 +251,55 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // mining the floor from an edge can leave part of the hitbox supported and
     // prevent the intended straight fall.
     if (terrainBreakingAllowed && index > 0 && index < path.size() &&
-        path[index].movement == MovementType::BreakDown &&
-        playerFeetBlock == path[index - 1].pos) {
+        path[index].movement == MovementType::BreakDown && player->isOnGround() &&
+        playerFeetBlock != path[index].pos) {
+        if (!validBreakDownGroundCell(
+            path[index - 1].pos, path[index].pos, playerFeetBlock)) {
+            clearInput(player);
+            lastFailureReason = "not positioned above vertical shaft";
+            return ExecutionStatus::OffPath;
+        }
+        const bool enteringShaft = requiresBreakDownEntryCentering(
+            path[index - 1].movement);
+        if (enteringShaft) {
         const glm::vec2 center{path[index - 1].pos.x + 0.5f,
             path[index - 1].pos.z + 0.5f};
-        glm::vec2 correction = center - glm::vec2{feet.x, feet.z};
-        const float centerDistance = glm::length(correction);
-        if (centerDistance > 0.10f) {
-            correction = correction / centerDistance *
-                std::clamp(centerDistance * 2.5f, 0.12f, 0.55f);
+        const glm::vec2 centerError = center - glm::vec2{feet.x, feet.z};
+        const glm::vec2 horizontalMotion{measuredMotion.x, measuredMotion.z};
+        const float centerDistance = glm::length(centerError);
+        const float horizontalSpeed = glm::length(horizontalMotion);
+        // Position alone is not enough: arriving at the center with residual
+        // walking momentum used to start mining and then carry the player off
+        // the block. Settle both position and velocity while sneaking.
+        const bool safelyCentered = bedrock_physics::shaftFootprintCentered(
+            centerError.x, centerError.y);
+        if (!safelyCentered || horizontalSpeed > 0.025f) {
+            glm::vec2 correction{};
+            if (!safelyCentered) {
+                const glm::vec2 towardCenter = centerError / centerDistance;
+                const float inwardSpeed = glm::dot(horizontalMotion, towardCenter);
+                correction = towardCenter *
+                    bedrock_physics::shaftCenterInput(centerDistance, inwardSpeed);
+            }
             const float yaw = player->getRotation().y * std::numbers::pi_v<float> / 180.f;
             const glm::vec2 forward{-std::sin(yaw), std::cos(yaw)};
             const glm::vec2 right{forward.y, -forward.x};
-            const float forwardAmount = std::clamp(glm::dot(forward, correction), -0.55f, 0.55f);
-            const float strafeAmount = std::clamp(glm::dot(right, correction), -0.55f, 0.55f);
+            const float forwardAmount = std::clamp(glm::dot(forward, correction), -0.32f, 0.32f);
+            const float strafeAmount = std::clamp(glm::dot(right, correction), -0.32f, 0.32f);
             if (const auto input = player->tryGet<MoveInputComponent>()) {
-                if (!movementModeCaptured) {
-                    previousCameraRelativeMovement = input->isCameraRelativeMovementEnabled;
-                    previousRotationControlledByMovement = input->isRotControlledByMoveDirection;
-                    movementModeCaptured = true;
-                }
-                input->isCameraRelativeMovementEnabled = false;
-                input->isRotControlledByMoveDirection = true;
-                const glm::vec2 movement{strafeAmount, forwardAmount};
+                // This correction is already camera-relative. Preserve the
+                // native movement-mode flags so Bedrock interprets it exactly
+                // like every other path command.
+                const auto safeMovement = movement_input::sanitize({strafeAmount, forwardAmount});
+                const glm::vec2 movement{safeMovement.x, safeMovement.y};
+                const auto directions = movement_input::directions(safeMovement);
                 input->move = movement;
                 input->inputState.analogMoveVector = movement;
                 input->rawInputState.analogMoveVector = movement;
-                input->inputState.up = input->rawInputState.up = forwardAmount > 0.35f;
-                input->inputState.down = input->rawInputState.down = forwardAmount < -0.35f;
-                input->inputState.left = input->rawInputState.left = strafeAmount < -0.35f;
-                input->inputState.right = input->rawInputState.right = strafeAmount > 0.35f;
+                input->inputState.up = input->rawInputState.up = directions.up;
+                input->inputState.down = input->rawInputState.down = directions.down;
+                input->inputState.left = input->rawInputState.left = directions.left;
+                input->inputState.right = input->rawInputState.right = directions.right;
                 input->inputState.upLeft = input->rawInputState.upLeft = input->inputState.up && input->inputState.left;
                 input->inputState.upRight = input->rawInputState.upRight = input->inputState.up && input->inputState.right;
                 input->inputState.downLeft = input->rawInputState.downLeft = input->inputState.down && input->inputState.left;
@@ -288,10 +308,12 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 input->inputState.jumpDown = input->rawInputState.jumpDown = false;
                 input->inputState.jumpInputCurrentlyDown = false;
                 input->rawInputState.jumpInputCurrentlyDown = false;
-                input->inputState.sneakDown = input->rawInputState.sneakDown = false;
+                input->inputState.sneakDown = input->rawInputState.sneakDown = true;
+                input->inputState.sneakInputCurrentlyDown = true;
+                input->rawInputState.sneakInputCurrentlyDown = true;
                 input->sprinting = false;
                 input->jumping = false;
-                input->sneaking = false;
+                input->sneaking = true;
                 input->persistSneak = false;
                 input->wantDown = false;
                 input->moveInputStateLocked = false;
@@ -300,6 +322,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             }
             ticksWithoutProgress = 0;
             return ExecutionStatus::Running;
+        }
         }
     }
 
@@ -476,6 +499,9 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             }
 
             if (const auto input = player->tryGet<MoveInputComponent>()) {
+                const bool miningStraightDown = index < path.size() &&
+                    path[index].movement == MovementType::BreakDown;
+                const bool sneakWasDown = input->rawInputState.sneakInputCurrentlyDown;
                 input->move = {};
                 input->inputState.analogMoveVector = {};
                 input->rawInputState.analogMoveVector = {};
@@ -489,8 +515,27 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 input->rawInputState.downLeft = input->rawInputState.downRight = false;
                 input->inputState.sprintDown = input->rawInputState.sprintDown = false;
                 input->inputState.jumpDown = input->rawInputState.jumpDown = false;
+                input->inputState.jumpInputCurrentlyDown = false;
+                input->rawInputState.jumpInputCurrentlyDown = false;
+                input->inputState.jumpInputWasPressed = input->rawInputState.jumpInputWasPressed = false;
+                input->inputState.jumpInputWasReleased = input->rawInputState.jumpInputWasReleased = false;
                 input->sprinting = false;
                 input->jumping = false;
+                input->inputState.sneakDown = input->rawInputState.sneakDown = miningStraightDown;
+                input->inputState.sneakInputCurrentlyDown = miningStraightDown;
+                input->rawInputState.sneakInputCurrentlyDown = miningStraightDown;
+                input->inputState.sneakInputWasPressed =
+                    input->rawInputState.sneakInputWasPressed = miningStraightDown && !sneakWasDown;
+                input->inputState.sneakInputWasReleased =
+                    input->rawInputState.sneakInputWasReleased = !miningStraightDown && sneakWasDown;
+                input->sneaking = miningStraightDown;
+                input->persistSneak = false;
+                // postTick reapplies the cached command after Bedrock's native
+                // tick. Cache this zero-motion mining state or it will replay
+                // the previous walking/centering command while the floor is
+                // being broken.
+                captureInputCommand(input);
+                controlledMovement = true;
             }
 
             const glm::ivec3 target{obstruction->x, obstruction->y, obstruction->z};
@@ -646,12 +691,12 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // steer backward toward the top of the drop.
         if (!reached && index > 0 && player->isOnGround() && MC::getRegion() != nullptr &&
             (node.movement == MovementType::Descend || node.movement == MovementType::Fall) &&
-            std::abs(feet.y - static_cast<float>(node.pos.y)) <= 0.70f) {
+            std::abs(feet.y - static_cast<float>(node.pos.y)) <= 0.85f) {
             const auto landing = projectOntoSegment(feet, path[index - 1].pos, node.pos);
             const BedrockWorld world(MC::getRegion());
-            reached = hasSafeSupport(world, playerFeetBlock) &&
-                landing.progress >= 0.60f && landing.progress <= 2.20f &&
-                landing.lateralDistance <= 0.55f;
+            reached = validSupportedFallLanding(hasSafeSupport(world, playerFeetBlock),
+                feet.y - static_cast<float>(node.pos.y), landing.progress,
+                landing.lateralDistance);
         }
 
         // A sequence of drops is one continuous physical movement. Bedrock
@@ -733,6 +778,23 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             }
         }
 
+        // Every transition into BreakDown, regardless of how its source was
+        // reached, must finish at rest over the exact source centre. Keep the
+        // intact floor in control until this is true; only the following tick
+        // is then allowed to select and mine the block directly underneath.
+        if (reached && player->isOnGround() &&
+            requiresBreakDownEntryCentering(node.movement) && index + 1 < path.size() &&
+            path[index + 1].movement == MovementType::BreakDown) {
+            const float centreX = static_cast<float>(node.pos.x) + 0.5f;
+            const float centreZ = static_cast<float>(node.pos.z) + 0.5f;
+            const float offsetX = feet.x - centreX;
+            const float offsetZ = feet.z - centreZ;
+            const float horizontalSpeed = glm::length(
+                glm::vec2{measuredMotion.x, measuredMotion.z});
+            reached = bedrock_physics::shaftFootprintCentered(offsetX, offsetZ) &&
+                horizontalSpeed <= 0.025f;
+        }
+
         if (!reached)
             break;
         ++index;
@@ -742,6 +804,20 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         clearInput(player);
         restoreMiningHotbar(player);
         return ExecutionStatus::Arrived;
+    }
+
+    // If momentum carried the player completely beyond an unconsumed node,
+    // stop before issuing another command. In particular, never keep treating
+    // a missed descent landing as an approach to the edge above it.
+    if (player->isOnGround() && index > 0) {
+        const auto missed = projectOntoSegment(feet, path[index - 1].pos, path[index].pos);
+        const auto movement = path[index].movement;
+        const bool drop = movement == MovementType::Descend || movement == MovementType::Fall;
+        if (missed.progress > (drop ? 2.25f : 1.35f)) {
+            clearInput(player);
+            lastFailureReason = "overshot movement node";
+            return ExecutionStatus::OffPath;
+        }
     }
 
     // Do not teleport progress to a merely nearby future segment. Give small
@@ -756,7 +832,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // not discard the complete A* result for lateral drift after every
         // block; the independent no-progress detector still replans if this
         // recovery genuinely stalls. Ordinary navigation stays strict.
-        if (!terrainBreakingAllowed && ticksOutsidePath > 16) {
+        if (!terrainBreakingAllowed && ticksOutsidePath > 4) {
             clearInput(player);
             lastFailureReason = "outside movement corridor";
             return ExecutionStatus::OffPath;
@@ -912,6 +988,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         activeBridgeIndex = index;
         bridgeNextStep = 1;
         bridgePlacementWait = 0;
+        bridgePlacementAttempts = 0;
     }
     if (!isBridge && !isBuildAscend) {
         restoreBridgeHotbar(player);
@@ -935,8 +1012,16 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             const FacingID supportFace = dx > 0 ? FacingID::West : dx < 0 ? FacingID::East :
                 (dz > 0 ? FacingID::North : FacingID::South);
             if (along >= -0.35f) {
+                if (bridgePlacementAttempts >= 3) {
+                    clearInput(player);
+                    lastFailureReason = "build placement retry limit";
+                    return ExecutionStatus::OffPath;
+                }
+                ++bridgePlacementAttempts;
+                bridgePlacementWait = 4;
                 if (placeBridgeBlock(player, placementTarget, supportFace)) {
                     bridgeNextStep = 2;
+                    bridgePlacementAttempts = 0;
                     bridgePlacementWait = 2;
                 } else {
                     // A vanilla use action spans several game/update ticks.
@@ -1008,8 +1093,16 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 ? std::max(0.32f, projectedPlacement - 0.38f)
                 : (step == 1 ? 0.32f : static_cast<float>(step) - 0.38f);
             if (along >= edgeThreshold) {
+                if (bridgePlacementAttempts >= 3) {
+                    clearInput(player);
+                    lastFailureReason = "bridge placement retry limit";
+                    return ExecutionStatus::OffPath;
+                }
+                ++bridgePlacementAttempts;
+                bridgePlacementWait = 4;
                 if (placeBridgeBlock(player, placementTarget, supportFace)) {
                     bridgeNextStep = step + 1;
+                    bridgePlacementAttempts = 0;
                     bridgePlacementWait = 1;
                 } else {
                     clearInput(player);
@@ -1019,6 +1112,15 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
     }
     const bool isParkour = node.movement == MovementType::Parkour;
+    if (isParkour && index > 0 && player->isOnGround() &&
+        playerFeetBlock != path[index - 1].pos) {
+        // A pre-launch walk-off changes the usable runway. Never keep steering
+        // toward the stale upper source (which previously produced a crouched
+        // edge loop); replan immediately from the real supported block.
+        clearInput(player);
+        lastFailureReason = "left parkour source before jumping";
+        return ExecutionStatus::OffPath;
+    }
     bool narrowFooting = false;
     if (player->isOnGround() && index > 0 && MC::getRegion() != nullptr) {
         const auto& source = path[index - 1].pos;
@@ -1102,7 +1204,10 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // exists yet, use safe-walk on the final approach to reduce overshoot.
     const bool endpointApproach = index + 1 == path.size() && ordinaryMovement &&
         activeEdgeProgress >= 0.58f && player->isOnGround();
-    const bool precisionSneak = endpointApproach ||
+    const bool approachingBreakDown = index + 1 < path.size() &&
+        path[index + 1].movement == MovementType::BreakDown &&
+        player->isOnGround() && activeEdgeProgress >= 0.45f;
+    const bool precisionSneak = endpointApproach || approachingBreakDown ||
         (narrowFooting && ordinaryMovement && upcomingTurn &&
             !upcomingVerticalOrParkour && activeEdgeProgress >= 0.58f &&
             player->isOnGround());
@@ -1113,6 +1218,13 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         }
         if (!player->isOnGround())
             parkourWasAirborne = true;
+        if (!player->isOnGround() && !parkourJumpIssued) {
+            // We slipped from the runway without issuing a jump. Release every
+            // movement key until landing; the grounded source check above will
+            // then replan from the actual block instead of adding overshoot.
+            clearInput(player);
+            return ExecutionStatus::Running;
+        }
         // If the launch became airborne but this same edge is still active on
         // the next grounded tick, the destination was missed. Stop immediately
         // and let the controller replan instead of walking off another edge.
@@ -1133,6 +1245,17 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     const glm::vec3 target{static_cast<float>(node.pos.x) + 0.5f, static_cast<float>(node.pos.y), static_cast<float>(node.pos.z) + 0.5f};
     glm::vec2 direction{target.x - feet.x, target.z - feet.z};
     glm::vec2 facingDirection = direction;
+    glm::vec2 shaftApproachWorldInput{};
+    if (approachingBreakDown) {
+        const float centerDistance = glm::length(direction);
+        if (!bedrock_physics::shaftFootprintCentered(direction.x, direction.y)) {
+            const glm::vec2 towardCenter = direction / centerDistance;
+            const float inwardSpeed = glm::dot(
+                glm::vec2{measuredMotion.x, measuredMotion.z}, towardCenter);
+            shaftApproachWorldInput = towardCenter *
+                bedrock_physics::shaftCenterInput(centerDistance, inwardSpeed);
+        }
+    }
     bool ascendTakeoffReady = !isAscending;
     float ascendApproachScale = 1.f;
     if (isAscending && index > 0) {
@@ -1251,11 +1374,12 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             }
         }
     }
-    bool fallCoasting = false;
-    bool fallBraking = false;
+    bool fallControlActive = false;
+    bool cautiousDropSneak = false;
+    glm::vec2 fallWorldInput{};
     if ((node.movement == MovementType::Descend || node.movement == MovementType::BreakDescend || node.movement == MovementType::Fall ||
-        node.movement == MovementType::WaterDrop) &&
-        index > 0 && !player->isOnGround()) {
+        node.movement == MovementType::WaterDrop) && index > 0 &&
+        (!player->isOnGround() || playerFeetBlock == path[index - 1].pos)) {
         const auto& source = path[index - 1].pos;
         // Preserve the edge's forward tangent throughout the drop. Targeting
         // the landing center directly makes the vector reverse after momentum
@@ -1267,6 +1391,9 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             static_cast<float>(node.pos.z - source.z)};
         const float fallLength = glm::length(fallVector);
         if (fallLength > 0.001f) {
+            const int verticalDrop = std::max(0, source.y - node.pos.y);
+            const bool longDrop = verticalDrop >= 2 &&
+                node.movement != MovementType::WaterDrop;
             const glm::vec2 fallDirection = fallVector / fallLength;
             const glm::vec2 sourceCenter{source.x + 0.5f, source.z + 0.5f};
             const glm::vec2 fromSource{feet.x - sourceCenter.x, feet.z - sourceCenter.y};
@@ -1281,20 +1408,43 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
             const int landingTicks = bedrock_physics::ticksUntilHeight(
                 feet.y, measuredMotion.y, target.y, 20);
-            const float currentAlongSpeed = std::max(alongSpeed, 0.f);
-            const float predictedCoastProgress = projection.progress +
-                bedrock_physics::projectedAirDisplacement(
-                    currentAlongSpeed, 0.f, false, false, landingTicks) / fallLength;
-            const float predictedBrakeProgress = projection.progress +
-                bedrock_physics::projectedAirDisplacement(
-                    currentAlongSpeed, -1.f, false, false, landingTicks) / fallLength;
-            // A falling player has already accumulated most of the momentum
-            // that will carry them forward. Forecast the actual no-input and
-            // reverse-input landing points, then choose correction before the
-            // body crosses the destination block instead of braking afterward.
-            fallCoasting = projection.progress > 0.10f && predictedCoastProgress >= 0.62f;
-            fallBraking = projection.progress > 0.18f && predictedCoastProgress >= 0.92f &&
-                predictedBrakeProgress >= 0.92f;
+            const bool cautiousDrop = longDrop && (!player->isOnGround() ||
+                bedrock_physics::needsCautiousDropApproach(verticalDrop, false,
+                    projection.progress, alongSpeed, fallLength, landingTicks));
+            // Solve for the path-axis input that lands just before the block
+            // centre. This is camera-independent: applying a brake only to
+            // local W left local A/D still accelerating along the route when
+            // the camera was turned, which caused moving drops to overshoot.
+            // Slow to a reproducible walk-off speed before losing ground
+            // control. A sprint-speed takeoff cannot always be recovered by
+            // vanilla air acceleration, especially on multi-block drops.
+            const float dropEntrySpeed = cautiousDrop ? 0.06f : 0.10f;
+            const float landingProgress = cautiousDrop ? 0.80f : 0.90f;
+            // Direction flags are digital in the native controller. During a
+            // multi-block fall, even a tiny positive analog correction keeps
+            // the forward key held and behaves like full air acceleration.
+            // Enter slowly, then coast; lateral centering remains available.
+            const float alongInput = player->isOnGround()
+                ? (cautiousDrop
+                    ? bedrock_physics::cautiousDropGroundInput(
+                        projection.progress, alongSpeed)
+                    : std::max(0.f, bedrock_physics::groundInputForTargetVelocity(
+                        alongSpeed, dropEntrySpeed)))
+                : bedrock_physics::dropAirInput(verticalDrop,
+                    projection.progress, alongSpeed, fallLength, landingTicks,
+                    landingProgress);
+            // The source approach already centers the player. During a long
+            // fall, release all movement keys rather than letting a tiny
+            // lateral analog value become a full native strafe direction.
+            fallWorldInput = cautiousDrop && !player->isOnGround()
+                ? glm::vec2{}
+                : fallDirection * alongInput - lateralOffset * 1.35f;
+            cautiousDropSneak = cautiousDrop && player->isOnGround() &&
+                projection.progress < bedrock_physics::cautiousDropSneakReleaseProgress;
+            const float fallInputMagnitude = glm::length(fallWorldInput);
+            if (fallInputMagnitude > 1.f)
+                fallWorldInput /= fallInputMagnitude;
+            fallControlActive = node.movement != MovementType::WaterDrop;
         }
     }
     const float distance = glm::length(direction);
@@ -1445,21 +1595,28 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     float cautiousScale = parkourRepositioning ? 0.35f : 1.f;
     if (!isParkour) {
-        if (precisionSneak)
+        if (approachingBreakDown)
+            cautiousScale = 0.55f;
+        else if (precisionSneak)
             cautiousScale = 0.82f;
     }
     const float pathMovementScale = cautiousScale * humanApproachScale * ascendApproachScale;
     const float forwardAmount = parkourAirBrake ? -0.24f :
         (parkourAirRelease ? 0.f : (parkourApproachBrake ? -0.16f :
-        (parkourApproachRelease ? 0.f :
-        (fallBraking ? -0.55f : (fallCoasting ? 0.f :
-            requestedForward * pathMovementScale)))));
+        (parkourApproachRelease ? 0.f : requestedForward * pathMovementScale)));
     // Keep lateral correction active while braking so an imperfect launch is
     // pulled back over the landing block instead of drifting beside it.
     const float strafeAmount = std::clamp(glm::dot(right, direction), -1.f, 1.f) *
         ((parkourAirRelease || parkourAirBrake) ?
             std::clamp(parkourLateralCorrection * 2.5f, 0.25f, 1.f) : 1.f);
     glm::vec2 localMovement{strafeAmount, forwardAmount};
+    if (approachingBreakDown) {
+        localMovement = {glm::dot(right, shaftApproachWorldInput),
+            glm::dot(forward, shaftApproachWorldInput)};
+    }
+    if (fallControlActive) {
+        localMovement = {glm::dot(right, fallWorldInput), glm::dot(forward, fallWorldInput)};
+    }
     if (node.movement == MovementType::WaterDrop && !inWaterBlocks) {
         // Regulate both world axes throughout the fall, including overshoot.
         // Do not normalize this correction or keep a fixed forward tangent.
@@ -1480,13 +1637,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         // Vanilla bounds the combined movement stick before acceleration. Keep
         // diagonal path correction inside that same unit circle so a forward +
         // strafe request cannot describe an impossible input to BDS.
-        const float inputMagnitude = glm::length(localMovement);
-        if (inputMagnitude > 1.f)
-            localMovement /= inputMagnitude;
-        if (std::abs(localMovement.x) < 0.02f)
-            localMovement.x = 0.f;
-        if (std::abs(localMovement.y) < 0.02f)
-            localMovement.y = 0.f;
+        const auto safeMovement = movement_input::sanitize({localMovement.x, localMovement.y});
+        localMovement = {safeMovement.x, safeMovement.y};
     }
 
     bool shouldSprint = false;
@@ -1495,11 +1647,11 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         input->inputState.analogMoveVector = localMovement;
         input->rawInputState.analogMoveVector = localMovement;
 
-        constexpr float digitalThreshold = 0.35f;
-        input->inputState.up = localMovement.y > digitalThreshold;
-        input->inputState.down = localMovement.y < -digitalThreshold;
-        input->inputState.left = localMovement.x < -digitalThreshold;
-        input->inputState.right = localMovement.x > digitalThreshold;
+        const auto directions = movement_input::directions({localMovement.x, localMovement.y});
+        input->inputState.up = directions.up;
+        input->inputState.down = directions.down;
+        input->inputState.left = directions.left;
+        input->inputState.right = directions.right;
         input->rawInputState.up = input->inputState.up;
         input->rawInputState.down = input->inputState.down;
         input->rawInputState.left = input->inputState.left;
@@ -1580,14 +1732,19 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
         // Keep swimming buoyant; precision ground steering must not cause a dive.
-        const bool shouldSneak = isBridge ||
+        const bool shouldSneak = isBridge || cautiousDropSneak ||
             ((precisionSneak || parkourRepositioning) && !inWaterBlocks);
+        const bool sneakWasDown = input->rawInputState.sneakInputCurrentlyDown;
         input->sneaking = shouldSneak;
         input->wantDown = false;
         input->inputState.sneakDown = shouldSneak;
         input->rawInputState.sneakDown = shouldSneak;
         input->inputState.sneakInputCurrentlyDown = shouldSneak;
         input->rawInputState.sneakInputCurrentlyDown = shouldSneak;
+        input->inputState.sneakInputWasPressed =
+            input->rawInputState.sneakInputWasPressed = shouldSneak && !sneakWasDown;
+        input->inputState.sneakInputWasReleased =
+            input->rawInputState.sneakInputWasReleased = !shouldSneak && sneakWasDown;
         captureInputCommand(input, !isBridge);
     }
 
@@ -1685,6 +1842,7 @@ void PathExecutor::stop(LocalPlayer* player) {
     resetParkourState();
     bridgeNextStep = 1;
     bridgePlacementWait = 0;
+    bridgePlacementAttempts = 0;
     activeBridgeIndex = static_cast<std::size_t>(-1);
     restoreBridgeHotbar(player);
     bridgePitchActive = false;
@@ -1728,25 +1886,33 @@ bool PathExecutor::placeBridgeBlock(LocalPlayer* player, const BlockPos& target,
     };
 
     static constexpr glm::ivec3 supports[] = {{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}};
-    for (int face = 0; face < 6; ++face) {
+    int selectedFace = -1;
+    const int preferredIndex = static_cast<int>(preferredFace);
+    if (preferredIndex >= 0 && preferredIndex < 6) {
+        const auto support = pos + supports[preferredIndex];
+        auto* block = source->getBlock(support);
+        if (block != nullptr && block->getBlockLegacy() != nullptr &&
+            block->getBlockLegacy()->isSolid())
+            selectedFace = preferredIndex;
+    }
+    for (int face = 0; face < 6 && selectedFace < 0; ++face) {
         const auto support = pos + supports[face];
         auto* block = source->getBlock(support);
-        if (block == nullptr || block->getBlockLegacy() == nullptr || !block->getBlockLegacy()->isSolid()) continue;
-        auto place = pos;
-        if (player->getGameMode()->buildBlock(place, static_cast<FacingID>(face), false)) {
-            restoreSlot();
-            return true;
-        }
+        if (block != nullptr && block->getBlockLegacy() != nullptr &&
+            block->getBlockLegacy()->isSolid())
+            selectedFace = face;
     }
-    if (preferredFace != FacingID::Unknown) {
+    bool placed = false;
+    if (selectedFace >= 0) {
         auto place = pos;
-        if (player->getGameMode()->buildBlock(place, preferredFace, false)) {
-            restoreSlot();
-            return true;
-        }
+        // Exactly one native use action per retry. buildBlock can send a
+        // transaction even when it returns false, so probing every face in a
+        // single tick creates a packet burst and can disconnect from BDS.
+        placed = player->getGameMode()->buildBlock(
+            place, static_cast<FacingID>(selectedFace), false);
     }
     restoreSlot();
-    return false;
+    return placed;
 }
 
 void PathExecutor::restoreBridgeHotbar(LocalPlayer* player) {
@@ -1857,11 +2023,6 @@ void PathExecutor::clearInput(LocalPlayer* player) {
 }
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
-        if (movementModeCaptured) {
-            input->isCameraRelativeMovementEnabled = previousCameraRelativeMovement;
-            input->isRotControlledByMoveDirection = previousRotationControlledByMovement;
-            movementModeCaptured = false;
-        }
         input->move = {};
         input->inputState.analogMoveVector = {};
         input->rawInputState.analogMoveVector = {};

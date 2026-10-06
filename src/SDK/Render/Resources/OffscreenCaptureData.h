@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../Client/mce/ClientTexture.h"
+#include "../../Client/MCE/ClientTexture.h"
 
 struct OffscreenCaptureData {
     int unk1;

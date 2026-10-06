@@ -3,9 +3,11 @@
 #include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
 #include "../../../Client.h"
 #include "../../../Client/GUI/ClickGui.h"
-#include "../../../Client/Module/ModuleManager.h"
-#include "../../../Client/Module/Modules/FullBrightModule.h"
-#include "../../../Baritone/Bedrock/BedrockBlockBreaking.h"
+#include "../../../Client/Modules/CameraTweaksModule.h"
+#include "../../../Client/Modules/FullBrightModule.h"
+#include "../../../Client/Modules/GuiMoveModule.h"
+#include "../../../Client/Modules/LimiterModule.h"
+#include "../../../Client/Modules/ModuleManager.h"
 #include "../../../Baritone/Bedrock/ElytraProcess.h"
 #include "../../../SDK/MC.h"
 #include "../../../SDK/Network/LoopbackPacketSender.h"
@@ -197,7 +199,10 @@ bool ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens(void* lev
     static auto original = GET_HOOK(&ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens);
     if (g_Client.clickGuiOpened)
         return false;
-    return original != nullptr && original(level);
+    const bool nativeResult = original != nullptr && original(level);
+    const auto guiMove = g_modMgr.getModule<GuiMoveModule>();
+    return nativeResult || (guiMove != nullptr && guiMove->isEnabled() &&
+        MC::getLocalPlayer() != nullptr);
 }
 
 void Actor_baseTick(Actor* actor) {
@@ -289,6 +294,11 @@ bool feedMouseMessage(const UINT message, const WPARAM wParam) {
     case WM_MOUSEWHEEL: {
         bool cancel = false;
         ClickGui::onWheel(GET_WHEEL_DELTA_WPARAM(wParam) > 0, cancel);
+        if (!cancel) {
+            const auto cameraTweaks = g_modMgr.getModule<CameraTweaksModule>();
+            cancel = cameraTweaks != nullptr && cameraTweaks->isEnabled() &&
+                cameraTweaks->onWheel(GET_WHEEL_DELTA_WPARAM(wParam) > 0);
+        }
         return cancel;
     }
     default: return false;

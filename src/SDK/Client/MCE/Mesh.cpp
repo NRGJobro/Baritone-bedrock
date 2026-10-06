@@ -71,12 +71,3 @@ void mce::Mesh::renderMesh(MeshContext* meshContext, MaterialPtr* material) cons
     static auto func = Utils::getFromOffset<func_t>(GET_SIG("mce::Mesh::_renderMesh"), 1);
     func(this, meshContext, material, {}, 0, 0, UIMeshOffscreenCaptureDescription(), nullptr, {});
 }
-
-void mce::Mesh::renderMeshFull(MeshContext* meshContext, MaterialPtr* material, StaticVector<std::variant<std::monostate, TexturePtr, ClientTexture>, 8> textures,
-    uint32_t startOffset, uint32_t count,
-    const std::variant<std::monostate, UIActorOffscreenCaptureDescription, UIThumbnailMeshOffscreenCaptureDescription, UIMeshOffscreenCaptureDescription, UIStructureVolumeOffscreenCaptureDescription>& variant,
-    void* overrideIndexBuffer, const std::optional<dragon::RenderMetadata>& metadata) const {
-    static auto sig = Utils::getFromOffset<uintptr_t>(GET_SIG("mce::Mesh::_renderMesh"), 1);
-    static auto func = *(decltype(&Mesh::renderMeshFull)*)&sig;
-    (this->*func)(meshContext, material, textures, startOffset, count, variant, overrideIndexBuffer, metadata);
-}

@@ -3,6 +3,7 @@
 #include "../Core/BlockPos.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -71,6 +72,8 @@ class MiningProcess {
     bool previousBridgeOverWaterOnly = false;
     bool previousBridgeOnlyAfterFailure = true;
     bool previousMiningMode = false;
+    bool previousPreferVerticalMining = false;
+    int previousPreferredVerticalMiningY = std::numeric_limits<int>::min();
     std::size_t previousMaxExpandedNodes = 60000;
     std::size_t previousNodesPerTick = 350;
     double previousHeuristicWeight = 1.0;

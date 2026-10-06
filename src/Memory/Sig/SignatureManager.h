@@ -41,8 +41,6 @@ public:
 
     void scanAll();
 
-    void clear();
-
 private:
     std::unordered_map<size_t, std::shared_ptr<Signature>> sigs;
 };

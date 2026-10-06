@@ -105,14 +105,49 @@ inline std::vector<PathNode> pathSuffix(const std::vector<PathNode>& path, const
     return result;
 }
 
+// During a straight-down break, a grounded actor is valid either immediately
+// above the floor being mined or in the exact destination after that floor
+// disappears. The executor observes node completion after its pre-mine guard,
+// so the destination must not be mistaken for lateral path drift.
+inline bool validBreakDownGroundCell(const BlockPos& source,
+    const BlockPos& destination, const BlockPos& feet) {
+    return feet == source || feet == destination;
+}
+
+// Centre once when entering a shaft. A completed BreakDown already lands in
+// the validated shaft column, so requiring another centering pass between
+// every block only creates visible left/right oscillation.
+inline bool requiresBreakDownEntryCentering(const MovementType sourceMovement) {
+    return sourceMovement != MovementType::BreakDown;
+}
+
+// Bedrock reports the feet point near cell boundaries with small collision
+// and interpolation differences. A completed drop may therefore be outside
+// the exact destination block even though it landed safely on the intended
+// route strip. Keep this tolerance bounded to one landing width so unrelated
+// lower terrain cannot consume the node.
+inline bool validSupportedFallLanding(const bool supported, const float heightError,
+    const float progress, const float lateralDistance) {
+    return supported && std::isfinite(heightError) && std::isfinite(progress) &&
+        std::isfinite(lateralDistance) && std::abs(heightError) <= 0.85f &&
+        progress >= 0.30f && progress <= 2.25f && lateralDistance <= 0.72f;
+}
+
+inline int cameraIndependentParkourDistance(const int configuredDistance) {
+    return std::clamp(configuredDistance, 2, 2);
+}
+
 // Each search uses a copy: fallback must never raise the user's saved budget
 // or leave construction/breaking enabled for the next navigation request.
 inline PathOptions routeOptions(PathOptions options, RouteStage stage) {
     options.allowBreak = options.miningMode ? options.allowBreak : stage != RouteStage::Walk;
     options.allowBridge = options.allowBridge && stage == RouteStage::Build;
     options.bridgeOnlyAfterFailure = false;
-    options.maxExpandedNodes = std::clamp<std::size_t>(options.maxExpandedNodes, 1, 4000);
-    options.nodesPerTick = std::clamp<std::size_t>(options.nodesPerTick, 1, 96);
+    const bool naturalWalk = stage == RouteStage::Walk && !options.miningMode;
+    options.maxExpandedNodes = std::clamp<std::size_t>(options.maxExpandedNodes, 1,
+        naturalWalk ? 24000 : 4000);
+    options.nodesPerTick = std::clamp<std::size_t>(options.nodesPerTick, 1,
+        naturalWalk ? 160 : 96);
     if (!options.miningMode)
         options.heuristicWeight = 1.0;
     return options;

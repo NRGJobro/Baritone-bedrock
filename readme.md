@@ -1,37 +1,49 @@
 # Limiter
 
-A Minecraft Bedrock port of Baritone built on a trimmed MCRenderTests-compatible SDK surface. The old combat, exploit, movement, and utility feature set has been removed so the client can focus on autonomous navigation and world processes. The only ClickGUI card is Limiter.
+Limiter is a focused Minecraft Bedrock navigation client. It provides pathfinding,
+mining, exploration, waypoints, Elytra travel, and a small set of supporting
+modules without carrying a general-purpose client feature set.
 
-## Controls
+## Modules
 
-- `Tab` opens the MCRenderTests ClickGUI.
-- `End` unloads the client.
-- `.goto x y z` sets a block goal and starts pathing.
-- `.goal x y z` sets a goal without starting.
-- `.path`, `.stop`, `.pause`, `.resume`, and `.status` control execution.
-- `.xz x z`, `.y level`, and `.near x y z radius` select other goal types.
-- `.water on/off` and `.fall 0-64` change core traversal policy.
-- `.axis`, `.thisway distance`, `.away x y z distance`, and `.surface` expose additional Baritone goal types.
-- `.mine diamond_ore 8 32` scans loaded blocks for both regular and deepslate diamond ore, plans a safe two-block-high tunnel through breakable walls while avoiding water and damage blocks, equips the best hotbar tool, and mines up to eight matches in a 32-block radius. Numeric runtime IDs and comma-separated filters are also accepted; a count of `0` mines continuously.
-- `.tunnel` clears a 1x2x32 passage in the facing direction; `.tunnel height width depth` supports bounded custom dimensions.
-- `.explore [chunkRadius]` visits chunk centers in expanding rings; radius `0` explores continuously.
-- `.wp save/goto/delete name` and `.wp list` manage session waypoints.
-- `.eta` estimates remaining path ticks and `.set` exposes advanced route budgets and movement policies.
-- `.b ...` remains available as a namespaced alternative.
+- **Limiter** — navigation, mining, exploration, and route rendering
+- **Camera Tweaks** — configurable third-person camera controls
+- **FullBright** — maximum world brightness while enabled
+- **GUI Move** — normal movement while supported game screens are open
 
-The ClickGUI includes Limiter and FullBright module cards. Limiter exposes movement toggles for diagonal traversal, water, one-block ascents, drops, sprinting, and stuck replanning. Visual toggles control the current path, animated goal, calculation details, fading, and line/ribbon geometry; active mining targets use cyan one-block markers visible through walls. FullBright forces both Bedrock's gamma lookup and player-vision render pass to maximum brightness while enabled, with vanilla lighting restored when disabled.
+Press `Tab` to open the ClickGUI and `End` to unload the client.
 
-## Current port scope
+## Commands
 
-The C++ core includes Baritone-style goals (block, XZ, Y level, near, composite, interaction, two/three-block, axis, and run-away), incremental A*, movement-cost/ETA tracking, partial paths at unloaded chunk boundaries, cardinal/diagonal traversal, one-block ascent, descent/fall, water traversal, hazard avoidance, break-aware mining routes, parkour, bridge construction, cancellation, pause/resume, stuck detection, and replanning. The Bedrock adapter reads blocks through `BlockSource`, drives the local player's ECS movement components, performs ordinary `GameMode` breaking/placement, and renders the active path.
+Commands can be entered directly, with `.l`, or with the compatible `.b`
+prefix. Run `.help` in game for the complete list.
 
-The first process layer now ports mining, loaded-world exploration, and session waypoints. Schematic building, farming, entity following, persistent chunk caching, and automatic tool/inventory management remain later layers.
+Common commands:
 
-## Build
+- `.goto x y z`, `.goal x y z`, `.path`, and `.stop`
+- `.pause`, `.resume`, `.status`, and `.eta`
+- `.mine diamond_ore 8 32`
+- `.tunnel [height width depth]`
+- `.explore [chunkRadius]`
+- `.wp save/goto/delete name` and `.wp list`
+- `.water on/off`, `.fall 0-64`, and `.set`
 
-Configure with CMake 3.28+ and MSVC for x64, then build the `Limiter` target; the output is `Limiter.dll`. `LimiterCoreTests` tests the platform-neutral pathfinder without Minecraft.
+## Source layout
 
-From a Visual Studio developer prompt:
+- `src/Baritone` contains the licensed navigation engine and Bedrock adapter.
+- `src/Client` contains Limiter's UI and modules.
+- `src/Memory` contains signatures and hooks.
+- `src/SDK` contains the minimal Minecraft types required by the client.
+- `src/Utils` contains shared rendering, logging, and platform helpers.
+- `tests` contains platform-neutral pathfinding regression tests.
+
+The client source list is explicit in `CMakeLists.txt`; adding a file to `src`
+does not silently add it to the DLL.
+
+## Building
+
+Limiter requires CMake 3.28 or newer and Clang-CL with the Visual Studio x64
+toolchain. From a Visual Studio developer prompt:
 
 ```bat
 cmake --preset x64-release
@@ -39,8 +51,10 @@ cmake --build --preset x64-release
 ctest --preset x64-release
 ```
 
-The presets use Visual Studio's bundled Ninja generator and unity batches for parallel, incremental builds. Visual Studio can open the repository directly as a CMake project.
+The client is written to `out/build/x64-release/Limiter.dll`.
 
 ## Licensing
 
-This project is a C++ adaptation informed by Baritone. Baritone is LGPL-3.0; its license is included as `LICENSE-Baritone`. Keep the corresponding source and notices available when distributing builds.
+The navigation engine is a C++ adaptation informed by Baritone. Baritone is
+licensed under LGPL-3.0; its license is included as `LICENSE-Baritone`.
+Retain the license and corresponding notices when distributing Limiter.

@@ -35,13 +35,6 @@
 #include <concepts>
 #include <compare>
 #include <bitset>
-#include <dwmapi.h>
-
-#include <dxgi.h>
-#include <dxgi1_2.h>
-#include <d3d11.h>
-#include <d3d12.h>
-
 #include <magic_enum/magic_enum_all.hpp>
 
 #include <MinHook.h>

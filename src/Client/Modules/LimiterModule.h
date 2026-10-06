@@ -1,14 +1,14 @@
 #pragma once
 
-#include "../../../Baritone/BaritoneController.h"
-#include "../../../Baritone/Bedrock/ElytraProcess.h"
-#include "../../../Baritone/Bedrock/ExploreProcess.h"
-#include "../../../Baritone/Bedrock/MiningProcess.h"
-#include "../Module.h"
+#include "../../Baritone/BaritoneController.h"
+#include "../../Baritone/Bedrock/ElytraProcess.h"
+#include "../../Baritone/Bedrock/ExploreProcess.h"
+#include "../../Baritone/Bedrock/MiningProcess.h"
+#include "Module.h"
 
 #include <unordered_map>
 
-class BaritoneModule final : public Module {
+class LimiterModule final : public Module {
     baritone::BaritoneController controller{};
     baritone::MiningProcess miningProcess{};
     baritone::ExploreProcess exploreProcess{};
@@ -19,7 +19,7 @@ class BaritoneModule final : public Module {
     void stopProcesses();
 
 public:
-    BaritoneModule();
+    LimiterModule();
 
     std::string getName() override;
     void onEnable() override;

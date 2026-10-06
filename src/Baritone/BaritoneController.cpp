@@ -58,6 +58,7 @@ void plannedBreakCells(const std::vector<PathNode>& path, const std::size_t inde
             cells.push_back(source.offset(0, 2, 0));
         addColumn(node.pos);
     } else if (node.movement == MovementType::BreakDown) {
+        cells.push_back(source.offset(0, 1, 0));
         cells.push_back(node.pos);
     } else if (node.movement == MovementType::BreakDescend) {
         addColumn(source.offset(dx, 0, dz));
@@ -110,9 +111,14 @@ bool BaritoneController::path() {
     protectedMiningSupports.clear();
     // Keep planning and execution on the same movement capability profile.
     options.preferSprint = executionOptions.sprint;
+    const auto start = getPlayerBlock();
+    // Ordinary navigation always proves that no natural route exists before
+    // terrain breaking is considered. Mining mode still receives break moves
+    // during this stage through routeOptions(), so explicit mining commands
+    // retain their direct shaft behavior.
     routeStage = RouteStage::Walk;
     replanGuard = {};
-    beginCalculation(getPlayerBlock());
+    beginCalculation(start);
     return true;
 }
 
@@ -407,6 +413,13 @@ void BaritoneController::beginCalculation(const BlockPos& start) {
         return;
     }
     activeOptions = routeOptions(options, routeStage);
+    // The executor keeps the real camera authoritative. Distances of three or
+    // four blocks require forward sprint alignment, which cannot be guaranteed
+    // when the player is looking elsewhere. Keep the camera-independent,
+    // vanilla one-gap jump and route around longer gaps instead of walking off
+    // while waiting for sprint readiness.
+    activeOptions.maxParkourDistance = cameraIndependentParkourDistance(
+        activeOptions.maxParkourDistance);
     calculationStart = start;
     pathfinder.begin(start, goal, activeOptions);
     state = ControllerState::Calculating;

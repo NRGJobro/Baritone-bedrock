@@ -286,8 +286,10 @@ void limiterMiningBreakBlocks(const std::vector<baritone::PathNode>& path,
             addColumn(source.offset(dx, 0, dz));
             addColumn(node.pos);
         } else if (node.movement == baritone::MovementType::BreakDown) {
-            // A vertical shaft removes only the floor block in the current
-            // column; the destination head cell is the player's old feet cell.
+            // Clear a stale/encroaching overhead block before opening the
+            // floor. This matters in leaf canopies where the actor can settle
+            // into a partially occupied source column after a short drop.
+            addCell(source.offset(0, 1, 0));
             addCell(node.pos);
         }
     }

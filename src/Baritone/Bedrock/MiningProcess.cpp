@@ -596,6 +596,7 @@ void MiningProcess::tick(BaritoneController& controller) {
         } else {
             collectionGoal = std::make_shared<GoalNear>(*pickupTarget, 1);
         }
+        controller.getOptions().preferredVerticalMiningY = std::numeric_limits<int>::min();
         if (!controller.goTo(std::move(collectionGoal))) {
             controller.stop();
             active = false;
@@ -674,6 +675,7 @@ void MiningProcess::tick(BaritoneController& controller) {
             breakingTarget.reset();
             pathingTarget.reset();
             breakTicks = 0;
+            controller.getOptions().preferredVerticalMiningY = target.y;
             controller.goTo(std::make_shared<GoalGetToBlock>(target));
             pathingTarget = target;
             return;
@@ -880,6 +882,7 @@ void MiningProcess::tick(BaritoneController& controller) {
         return left.z < right.z;
     });
     pathingTarget = *nearest;
+    controller.getOptions().preferredVerticalMiningY = pathingTarget->y;
     if (!controller.goTo(std::make_shared<GoalGetToBlock>(*pathingTarget))) {
         pathingTarget.reset();
         active = false;
@@ -1132,6 +1135,8 @@ void MiningProcess::enableBreakPolicy(BaritoneController& controller) {
     previousBridgeOverWaterOnly = options.bridgeOverWaterOnly;
     previousBridgeOnlyAfterFailure = options.bridgeOnlyAfterFailure;
     previousMiningMode = options.miningMode;
+    previousPreferVerticalMining = options.preferVerticalMining;
+    previousPreferredVerticalMiningY = options.preferredVerticalMiningY;
     previousMaxExpandedNodes = options.maxExpandedNodes;
     previousNodesPerTick = options.nodesPerTick;
     previousHeuristicWeight = options.heuristicWeight;
@@ -1151,6 +1156,8 @@ void MiningProcess::enableBreakPolicy(BaritoneController& controller) {
     options.bridgeOverWaterOnly = true;
     options.bridgeOnlyAfterFailure = false;
     options.miningMode = true;
+    options.preferVerticalMining = true;
+    options.preferredVerticalMiningY = std::numeric_limits<int>::min();
     // Mining has a bounded local search so an unreachable loaded target cannot
     // freeze the client while exploring tens of thousands of cave nodes.
     options.maxExpandedNodes = std::min<std::size_t>(options.maxExpandedNodes, 24000);
@@ -1177,6 +1184,8 @@ void MiningProcess::restoreBreakPolicy(BaritoneController& controller) {
     options.bridgeOverWaterOnly = previousBridgeOverWaterOnly;
     options.bridgeOnlyAfterFailure = previousBridgeOnlyAfterFailure;
     options.miningMode = previousMiningMode;
+    options.preferVerticalMining = previousPreferVerticalMining;
+    options.preferredVerticalMiningY = previousPreferredVerticalMiningY;
     options.maxExpandedNodes = previousMaxExpandedNodes;
     options.nodesPerTick = previousNodesPerTick;
     options.heuristicWeight = previousHeuristicWeight;

@@ -1,8 +1,5 @@
 #pragma once
 
-#include "Packet/Packet.h"
-
-class LoopbackPacketSender {
-public:
-    void sendToServer(Packet* packet);
-};
+// Limiter only needs the live sender object's address in order to hook its
+// send-to-server vtable entry. No native methods are called through this type.
+class LoopbackPacketSender {};

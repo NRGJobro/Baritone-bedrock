@@ -2,8 +2,10 @@
 
 #include "../../../Client.h"
 #include "../../../Client/GUI/ClickGui.h"
-#include "../../../Client/Module/ModuleManager.h"
-#include "../../../Client/Module/Modules/BaritoneModule.h"
+#include "../../../Client/Modules/CameraTweaksModule.h"
+#include "../../../Client/Modules/GuiMoveModule.h"
+#include "../../../Client/Modules/LimiterModule.h"
+#include "../../../Client/Modules/ModuleManager.h"
 #include "../../../SDK/MC.h"
 #include "../../../SDK/Render/MinecraftUIRenderContext.h"
 #include "../../../SDK/Screen/ScreenView.h"
@@ -14,6 +16,23 @@
 #include "../HookManager.h"
 
 namespace {
+
+std::int64_t Camera_getPerspective(std::int64_t options) {
+    static auto original = GET_HOOK(&Camera_getPerspective);
+    const auto value = original == nullptr ? 0 : original(options);
+    if (auto* cameraTweaks = g_modMgr.getModule<CameraTweaksModule>(); cameraTweaks != nullptr)
+        cameraTweaks->setPerspective(static_cast<int>(value));
+    return value;
+}
+
+void CameraBlend_tick(MinecraftCamera::CameraComponent* camera, void* context, float deltaTime) {
+    static auto original = GET_HOOK(&CameraBlend_tick);
+    if (original != nullptr)
+        original(camera, context, deltaTime);
+    if (auto* cameraTweaks = g_modMgr.getModule<CameraTweaksModule>();
+        cameraTweaks != nullptr && cameraTweaks->isEnabled())
+        cameraTweaks->apply(camera);
+}
 
 void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext* renderContext) {
     static auto original = GET_HOOK(&ScreenView_setupAndRender);
@@ -32,8 +51,14 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
     const auto& name = root->getName();
     if (name != "debug_screen" && name != "toast_screen" && name != "modal_progress_screen")
         currentScreen = name;
+    g_Client.hudScreenActive.store(currentScreen == "hud_screen",
+        std::memory_order_release);
+    const auto limiter = g_modMgr.getModule<LimiterModule>();
+    const auto guiMove = g_modMgr.getModule<GuiMoveModule>();
+    const bool inventoryMove = guiMove != nullptr && guiMove->isEnabled() &&
+        MC::getLocalPlayer() != nullptr;
     g_Client.gameplayInputAllowed.store(
-        currentScreen == "hud_screen" && !g_Client.clickGuiOpened,
+        !g_Client.clickGuiOpened && (currentScreen == "hud_screen" || inventoryMove),
         std::memory_order_release);
     if (name != "debug_screen")
         return;
@@ -48,9 +73,8 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
 
     if (currentScreen == "hud_screen") {
         ClickGui::render();
-        const auto module = g_modMgr.getModule<BaritoneModule>();
-        if (module != nullptr && module->isEnabled() && !g_Client.clickGuiOpened) {
-            const auto status = "Limiter: " + module->getController().getStatusLine();
+        if (limiter != nullptr && limiter->isEnabled() && !g_Client.clickGuiOpened) {
+            const auto status = "Limiter: " + limiter->getController().getStatusLine();
             DrawUtils::drawText(status, {4.f, 4.f}, {0.85f, 0.95f, 1.f, 1.f}, 0.85f);
         }
         // drawText queues glyph meshes on the current UI context. The native
@@ -83,6 +107,8 @@ __int64 LevelRenderer_renderLevel(LevelRenderer* renderer, ScreenContext* screen
 } // namespace
 
 void RenderHooks::init() {
+    ADD_HOOK("CameraOriginHook::tickSig", CameraBlend_tick);
+    ADD_HOOK("PerspectiveHook::perspectiveSig", Camera_getPerspective);
     ADD_HOOK2(ScreenView_setupAndRender,
         Utils::getFromOffset<uintptr_t>(GET_SIG("RenderContextHook::ctxSig"), 1));
     ADD_HOOK2(LevelRenderer_renderLevel,

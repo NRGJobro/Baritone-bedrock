@@ -4,22 +4,86 @@
 #include "../../SDK/MC.h"
 #include "../../SDK/Render/MeshHelpers.h"
 #include "../../Utils/DrawUtils.h"
-#include "../Module/ModuleManager.h"
-#include "../Module/Modules/BaritoneModule.h"
+#include "../Modules/LimiterModule.h"
+#include "../Modules/ModuleManager.h"
 
-static float guiXpos = 0.f, guiYpos = 0.f, guiWidth = 0.f, guiHeight = 0.f, scrollOffset = 0.f, renderScrollOffset = 0.f;
-static glm::vec2 modulesSectionPos, modulesSectionSize, moduleSize, settingsPanelPos, settingsPanelSize, lastClientUIScreenSize, mousePos;
-static int scrollingDirection = 0;
-constexpr float smoothness = 30.f;
-constexpr float outlineSize = 1.f;
-constexpr float radius = 4.2f;
-constexpr float panelRadius = 5.f;
-constexpr float blend = 0.75f;
-static bool shouldClick = false;
-static bool shouldRightClick = false;
-static bool baritoneSettingsExpanded = false;
-static bool rotationSliderDragging = false;
-static bool bridgeLengthSliderDragging = false;
+namespace {
+
+    constexpr float meshSmoothness = 30.f;
+    constexpr float shellRadius = 6.f;
+    constexpr float cardRadius = 4.f;
+    constexpr int modulesPerRow = 1;
+    constexpr float cardGap = 12.f;
+
+    const mce::Color ink{0.98f, 0.98f, 1.f, 1.f};
+    const mce::Color muted{0.73f, 0.70f, 0.80f, 1.f};
+    const mce::Color dim{0.50f, 0.46f, 0.58f, 1.f};
+    const mce::Color redline{0.60f, 0.25f, 1.f, 1.f};
+    const mce::Color amber{0.82f, 0.58f, 1.f, 1.f};
+    const mce::Color green{0.43f, 1.f, 0.69f, 1.f};
+
+    float guiX = 0.f;
+    float guiY = 0.f;
+    float guiWidth = 0.f;
+    float guiHeight = 0.f;
+    float sidebarWidth = 0.f;
+    float headerHeight = 0.f;
+    float scrollOffset = 0.f;
+    float renderedScrollOffset = 0.f;
+    float settingsScrollOffset = 0.f;
+    float renderedSettingsScrollOffset = 0.f;
+    float maxSettingsScroll = 0.f;
+    int wheelDirection = 0;
+
+    glm::vec2 contentPos{};
+    glm::vec2 contentSize{};
+    glm::vec2 moduleSize{};
+    glm::vec2 settingsPos{};
+    glm::vec2 settingsSize{};
+    glm::vec2 lastUiSize{};
+    glm::vec2 mousePos{};
+
+    bool clickPending = false;
+    bool rightClickPending = false;
+    bool settingsOpen = false;
+    bool rotationDragging = false;
+    bool bridgeDragging = false;
+    bool closingAnimation = false;
+    float openAnimation = 0.f;
+    std::unordered_map<const Module*, float> hoverAnimations;
+    std::unordered_map<const bool*, float> toggleAnimations;
+
+    bool contains(const glm::vec4& box, const glm::vec2 point) {
+        return point.x >= box.x && point.x < box.x + box.z && point.y >= box.y && point.y < box.y + box.w;
+    }
+
+    void renderAt(mce::Mesh& mesh, const glm::vec2 position, ScreenContext* screenContext, mce::MaterialPtr* material, MatrixStack& stack) {
+        stack.push();
+        stack.top().matrix = translate(stack.top().matrix, {position.x, position.y, 0.f});
+        mesh.renderMesh(screenContext->toMeshContext(), material);
+        stack.pop();
+    }
+
+    std::string fitText(std::string text, const float maximumWidth, const float scale) {
+        if (DrawUtils::getTextWidth(text, scale) <= maximumWidth)
+            return text;
+        constexpr std::string_view ellipsis = "...";
+        while (!text.empty() && DrawUtils::getTextWidth(text + std::string(ellipsis), scale) > maximumWidth)
+            text.pop_back();
+        return text + std::string(ellipsis);
+    }
+
+    void drawImmediateBars(const std::initializer_list<std::pair<glm::vec4, mce::Color>>& bars) {
+        auto* tessellator = DrawUtils::getTessellator();
+        if (tessellator == nullptr)
+            return;
+        tessellator->begin();
+        for (const auto& [rectangle, color] : bars)
+            DrawUtils::addFilledRectangle(rectangle, color, color.a);
+        MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), tessellator, DrawUtils::getUIFillColor());
+    }
+
+}  // namespace
 
 void ClickGui::setOpen(const bool open) {
     if (g_Client.clickGuiOpened == open) {
@@ -31,17 +95,21 @@ void ClickGui::setOpen(const bool open) {
     g_Client.clickGuiOpened = open;
     const auto window = MC::getWindowHandle();
     if (open) {
+        closingAnimation = false;
         g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
         if (auto* client = MC::getClientInstance(); client != nullptr)
             client->releaseMouse();
         ClipCursor(nullptr);
-        // Keep all button messages routed through our window procedure while
-        // ClickGUI is open. Releasing capture here allowed Bedrock's parallel
-        // mouse path to see the same click as an attack/break action.
         if (IsWindow(window))
             SetCapture(window);
         SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+        clickPending = false;
+        rightClickPending = false;
     } else {
+        closingAnimation = true;
+        settingsOpen = false;
+        rotationDragging = false;
+        bridgeDragging = false;
         if (GetCapture() == window)
             ReleaseCapture();
         if (auto* client = MC::getClientInstance(); client != nullptr)
@@ -61,52 +129,51 @@ void ClickGui::render() {
     if (g_Client.clickGuiOpened)
         maintainMouseCapture();
 
-    const auto screenContext = DrawUtils::getScreenContext();
-    const auto tessellator = DrawUtils::getTessellator();
-    const auto material = DrawUtils::getUIFillColor();
-    const auto guiData = MC::getGuiData();
-    const auto clientInstance = MC::getClientInstance();
-
-    if (!g_Client.clickGuiOpened || screenContext == nullptr || tessellator == nullptr ||
-        material == nullptr || guiData == nullptr || clientInstance == nullptr) {
-        renderScrollOffset = scrollOffset;
+    auto* screenContext = DrawUtils::getScreenContext();
+    auto* tessellator = DrawUtils::getTessellator();
+    auto* material = DrawUtils::getUIFillColor();
+    auto* guiData = MC::getGuiData();
+    auto* client = MC::getClientInstance();
+    if ((!g_Client.clickGuiOpened && !closingAnimation) || screenContext == nullptr || tessellator == nullptr || material == nullptr || guiData == nullptr || client == nullptr) {
+        renderedScrollOffset = scrollOffset;
+        renderedSettingsScrollOffset = settingsScrollOffset;
         return;
     }
 
-    const auto& clientScreenSize = guiData->screenSizeData.clientScreenSize;
-    const auto& clientUIScreenSize = guiData->screenSizeData.clientUIScreenSize;
-    if (clientScreenSize.x <= 0.f || clientScreenSize.y <= 0.f ||
-        clientUIScreenSize.x <= 0.f || clientUIScreenSize.y <= 0.f)
+    const auto clientScreenSize = guiData->screenSizeData.clientScreenSize;
+    const auto uiSize = guiData->screenSizeData.clientUIScreenSize;
+    if (clientScreenSize.x <= 0.f || clientScreenSize.y <= 0.f || uiSize.x <= 0.f || uiSize.y <= 0.f)
         return;
+
+    const float animationStep = std::clamp(static_cast<float>(g_Client.deltaTime) * 12.f, 0.f, 1.f);
+    openAnimation += ((g_Client.clickGuiOpened ? 1.f : 0.f) - openAnimation) * animationStep;
+    if (closingAnimation && openAnimation <= 0.015f) {
+        openAnimation = 0.f;
+        closingAnimation = false;
+        return;
+    }
+    const float easedOpen = 1.f - std::pow(1.f - openAnimation, 3.f);
 
     POINT cursor{};
     if (GetCursorPos(&cursor) && ScreenToClient(MC::getWindowHandle(), &cursor))
         mousePos = {static_cast<float>(cursor.x), static_cast<float>(cursor.y)};
-    mousePos /= clientScreenSize;
-    mousePos *= clientUIScreenSize;
+    mousePos = mousePos / clientScreenSize * uiSize;
 
-    constexpr float modulePadding = 14.f;
-    constexpr int modulesPerRow = 2;
-    constexpr int modulesPerCol = 4;
+    guiWidth = std::clamp(uiSize.x * 0.70f, 610.f, 790.f);
+    guiHeight = std::clamp(uiSize.y * 0.72f, 390.f, 500.f);
+    guiX = (uiSize.x - guiWidth) * 0.5f;
+    guiY = (uiSize.y - guiHeight) * 0.5f + (1.f - easedOpen) * 18.f;
+    sidebarWidth = std::clamp(guiWidth * 0.235f, 158.f, 184.f);
+    headerHeight = 66.f;
+    contentPos = {guiX + sidebarWidth, guiY + headerHeight};
+    contentSize = {guiWidth - sidebarWidth, guiHeight - headerHeight};
+    moduleSize = {contentSize.x - cardGap * 2.f, 124.f};
+    settingsPos = {contentPos.x + cardGap, contentPos.y + cardGap};
+    settingsSize = {contentSize.x - cardGap * 2.f, contentSize.y - cardGap * 2.f};
 
-    guiWidth = std::clamp(clientUIScreenSize.x * 0.66f, 540.f, 720.f);
-    guiHeight = std::clamp(clientUIScreenSize.y * 0.68f, 370.f, 460.f);
-    guiXpos = (clientUIScreenSize.x - guiWidth) / 2.f;
-    guiYpos = (clientUIScreenSize.y - guiHeight) / 2.f;
-    const float sidebarWidth = std::clamp(guiWidth * 0.225f, 128.f, 154.f);
-    constexpr float headerHeight = 46.f;
-    modulesSectionPos = {guiXpos + sidebarWidth, guiYpos + headerHeight};
-    modulesSectionSize = {guiWidth - sidebarWidth, guiHeight - headerHeight};
-    moduleSize = {(modulesSectionSize.x - (modulesPerRow + 1) * modulePadding) / modulesPerRow, 72.f};
-    // Settings are a modal view: cover the entire content area so module cards cannot
-    // remain visible or receive input behind the panel.
-    settingsPanelPos = {guiXpos + modulePadding, guiYpos + headerHeight};
-    settingsPanelSize = {guiWidth - modulePadding * 2.f, guiHeight - headerHeight - modulePadding};
-
-    if (!builtMeshes || lastClientUIScreenSize != clientUIScreenSize) {
-        lastClientUIScreenSize = clientUIScreenSize;
+    if (!builtMeshes || lastUiSize != uiSize || openAnimation < 0.995f || closingAnimation) {
+        lastUiSize = uiSize;
         buildMeshes();
-
         builtMeshes = true;
     }
 
@@ -115,505 +182,343 @@ void ClickGui::render() {
         return;
 
     overlayMesh.renderMesh(meshContext, material);
-    shadowMesh.renderMesh(meshContext, material);
-    bgMesh.renderMesh(meshContext, material);
+    shellMesh.renderMesh(meshContext, material);
+    headerMesh.renderMesh(meshContext, material);
     sidebarMesh.renderMesh(meshContext, material);
-    lineMesh.renderMesh(meshContext, material);
+    redlineMesh.renderMesh(meshContext, material);
 
-    auto& stack = clientInstance->getCamera().worldMatrixStack;
-    stack.push();
-    stack.top().matrix = translate(stack.top().matrix, {guiXpos + 10.f, guiYpos + 60.f, 0.f});
-    navMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-    stack.pop();
+    auto& stack = client->getCamera().worldMatrixStack;
 
-    DrawUtils::drawText("LIMITER", {guiXpos + 15.f, guiYpos + 14.f}, {0.94f, 0.95f, 0.98f, 1.f}, 0.86f);
-    DrawUtils::drawText("// LIMITER", {guiXpos + 65.f, guiYpos + 15.f}, {0.63f, 0.36f, 0.98f, 1.f}, 0.68f);
-    DrawUtils::drawText("PATHFINDING", {guiXpos + 20.f, guiYpos + 70.f}, {0.79f, 0.72f, 0.98f, 1.f}, 0.7f);
-    DrawUtils::drawText("[ TAB ]  Close menu", {guiXpos + 15.f, guiYpos + guiHeight - 24.f}, {0.48f, 0.49f, 0.56f, 1.f}, 0.62f);
+    auto* limiter = g_modMgr.getModule<LimiterModule>();
+    int activeModules = 0;
+    for (const auto& module : g_modMgr.getSortedModules())
+        activeModules += module->isEnabled() ? 1 : 0;
 
-    const float headerTextY = guiYpos + 15.f;
-    DrawUtils::drawText("Modules", {modulesSectionPos.x + 14.f, headerTextY}, {0.8f, 0.81f, 0.86f, 1.f}, 0.72f);
+    DrawUtils::drawText("LIMITER", {guiX + 20.f, guiY + 18.f}, ink, 1.30f);
+    DrawUtils::drawText("DRIVER CONTROL", {guiX + 106.f, guiY + 24.f}, muted, 0.76f);
+    DrawUtils::drawText("PATH CORE", {guiX + guiWidth - 86.f, guiY + 22.f}, amber, 0.76f);
 
-    const auto baritone = g_modMgr.getModule<BaritoneModule>();
-    if (baritone != nullptr) {
-        const auto status = baritone->getController().getStatusLine();
-        DrawUtils::drawText(status, {guiXpos + guiWidth - DrawUtils::getTextWidth(status, 0.62f) - 14.f, headerTextY}, {0.68f, 0.5f, 0.96f, 1.f}, 0.62f);
+    renderAt(gaugeMesh, {guiX + sidebarWidth * 0.5f, guiY + 126.f}, screenContext, material, stack);
+    const std::string activeLabel = std::format("{} / {}", activeModules, g_modMgr.getModuleCount());
+    DrawUtils::drawText(activeLabel, {guiX + sidebarWidth * 0.5f - DrawUtils::getTextWidth(activeLabel, 1.26f) * 0.5f, guiY + 116.f}, activeModules > 0 ? green : ink, 1.26f);
+    DrawUtils::drawText("SYSTEMS ARMED", {guiX + sidebarWidth * 0.5f - DrawUtils::getTextWidth("SYSTEMS ARMED", 0.72f) * 0.5f, guiY + 144.f}, muted, 0.72f);
+
+    const glm::vec4 garageTab{guiX + 13.f, guiY + 177.f, sidebarWidth - 26.f, 34.f};
+    drawImmediateBars({{{garageTab.x, garageTab.y, garageTab.x + garageTab.z, garageTab.y + garageTab.w}, {0.12f, 0.13f, 0.14f, 0.96f}}, {{garageTab.x, garageTab.y, garageTab.x + 3.f, garageTab.y + garageTab.w}, redline}});
+    DrawUtils::drawText("01", {garageTab.x + 12.f, garageTab.y + 9.f}, amber, 0.72f);
+    DrawUtils::drawText("GARAGE", {garageTab.x + 40.f, garageTab.y + 8.f}, ink, 0.88f);
+    DrawUtils::drawText("PATHFINDING CORE", {guiX + 20.f, guiY + 228.f}, muted, 0.70f);
+    DrawUtils::drawText("TAB", {guiX + 20.f, guiY + guiHeight - 43.f}, amber, 0.72f);
+    DrawUtils::drawText("CLOSE", {guiX + 53.f, guiY + guiHeight - 43.f}, ink, 0.72f);
+    DrawUtils::drawText("BEDROCK EDITION", {guiX + 20.f, guiY + guiHeight - 23.f}, muted, 0.70f);
+
+    const float titleX = contentPos.x + 18.f;
+    DrawUtils::drawText(settingsOpen ? "TUNING BAY" : "SYSTEM GARAGE", {titleX, guiY + 20.f}, ink, 1.02f);
+    if (limiter != nullptr) {
+        const auto status = fitText(limiter->getController().getStatusLine(), std::min(200.f, contentSize.x - 230.f), 0.72f);
+        DrawUtils::drawText(status, {contentPos.x + contentSize.x - DrawUtils::getTextWidth(status, 0.72f) - 18.f, guiY + 24.f}, limiter->isEnabled() ? green : muted, 0.72f);
     }
 
-    constexpr float speed = 18.f;
-    const float scrollUnit = scrollingDirection * speed;
+    if (!settingsOpen) {
+        constexpr float wheelSpeed = 22.f;
+        scrollOffset += wheelDirection * wheelSpeed;
+        wheelDirection = 0;
+        const int rows = (static_cast<int>(g_modMgr.getModuleCount()) + modulesPerRow - 1) / modulesPerRow;
+        const float gridHeight = cardGap + rows * (moduleSize.y + cardGap);
+        const float maxModuleScroll = std::max(0.f, gridHeight - contentSize.y);
+        scrollOffset = std::clamp(scrollOffset, 0.f, maxModuleScroll);
+        renderedScrollOffset += (scrollOffset - renderedScrollOffset) * std::clamp(static_cast<float>(g_Client.deltaTime) * 15.f, 0.f, 1.f);
 
-    scrollOffset += scrollUnit;
-    scrollingDirection = 0;
-    const int modCount = g_modMgr.getModuleCount();
-    const float scrollEnd = (moduleSize.y + modulePadding) * (static_cast<float>(modCount) / modulesPerRow - modulesPerCol + 1.f);
+        screenContext->setClippingRectangle(contentPos.x, contentPos.y, contentPos.x + contentSize.x, contentPos.y + contentSize.y);
+        int cardIndex = 0;
+        for (const auto& module : g_modMgr.getSortedModules()) {
+            const int row = cardIndex / modulesPerRow;
+            const int column = cardIndex % modulesPerRow;
+            ++cardIndex;
+            const glm::vec2 cardPosition{contentPos.x + cardGap + column * (moduleSize.x + cardGap), contentPos.y + cardGap + row * (moduleSize.y + cardGap) - renderedScrollOffset};
+            const glm::vec4 cardBox{cardPosition.x, cardPosition.y, moduleSize.x, moduleSize.y};
+            if (cardPosition.y < contentPos.y || cardPosition.y + moduleSize.y > contentPos.y + contentSize.y)
+                continue;
 
-    if (modCount > modulesPerCol * modulesPerRow)
-        scrollOffset = std::clamp(scrollOffset, 0.f, scrollEnd + 1.f);
-    else
-        scrollOffset = 0.f;
+            const bool hovered = contains(cardBox, mousePos);
+            auto& hoverAmount = hoverAnimations[module.get()];
+            hoverAmount += ((hovered ? 1.f : 0.f) - hoverAmount) * std::clamp(static_cast<float>(g_Client.deltaTime) * 16.f, 0.f, 1.f);
+            module->enabledButtonRegion += ((module->isEnabled() ? 1.f : 0.f) - module->enabledButtonRegion) * std::clamp(static_cast<float>(g_Client.deltaTime) * 12.f, 0.f, 1.f);
 
-    renderScrollOffset += (scrollOffset - renderScrollOffset) *
-        std::clamp(static_cast<float>(g_Client.deltaTime) * 14.f, 0.f, 1.f);
-
-    int row = 0, column = 0;
-
-    DrawUtils::getScreenContext()->setClippingRectangle(modulesSectionPos.x, modulesSectionPos.y + 0.5f,
-        modulesSectionSize.x, modulesSectionSize.y - 0.5f);
-
-    for (auto& mod : g_modMgr.getSortedModules()) {
-        if (baritoneSettingsExpanded)
-            continue;
-
-        float posX = modulesSectionPos.x + modulePadding + column * (moduleSize.x + modulePadding);
-
-        if (column >= modulesPerRow) {
-            row++;
-            column = 0;
-            posX = modulesSectionPos.x + modulePadding + column * (moduleSize.x + modulePadding);
-        }
-
-        column++;
-
-        float posY = modulesSectionPos.y + modulePadding + row * (moduleSize.y + modulePadding) - renderScrollOffset;
-
-        if (shouldRightClick && mousePos.x >= posX && mousePos.x < posX + moduleSize.x &&
-            mousePos.y >= posY && mousePos.y < posY + moduleSize.y) {
-            if (baritone != nullptr && mod.get() == baritone) {
-                baritoneSettingsExpanded = !baritoneSettingsExpanded;
+            renderAt(cardMesh, cardPosition, screenContext, material, stack);
+            if (hoverAmount > 0.01f) {
+                DrawUtils::setShaderColor(1.f, 1.f, 1.f, hoverAmount);
+                renderAt(cardHoverMesh, cardPosition, screenContext, material, stack);
+                DrawUtils::setShaderColor();
             }
-            shouldRightClick = false;
-        }
-
-        if (posY >= guiYpos + guiHeight || posY + moduleSize.y <= modulesSectionPos.y) {
-            if (mod->isEnabled())
-                mod->enabledButtonRegion = 1.f;
-            else
-                mod->enabledButtonRegion = 0.f;
-            continue;
-        }
-
-        if (mod->isEnabled()) {
-            if (mod->enabledButtonRegion < 1.f) {
-                mod->enabledButtonRegion += 5.f * g_Client.deltaTime;
-
-                if (mod->enabledButtonRegion >= 1.f)
-                    mod->enabledButtonRegion = 1.f;
+            if (module->enabledButtonRegion > 0.01f) {
+                DrawUtils::setShaderColor(1.f, 1.f, 1.f, module->enabledButtonRegion);
+                renderAt(cardActiveMesh, cardPosition, screenContext, material, stack);
+                DrawUtils::setShaderColor();
             }
-        }
-        else {
-            if (mod->enabledButtonRegion > 0.f) {
-                mod->enabledButtonRegion -= 5.f * g_Client.deltaTime;
 
-                if (mod->enabledButtonRegion <= 0.f)
-                    mod->enabledButtonRegion = 0.f;
+            const std::string number = std::format("{:02}", cardIndex);
+            DrawUtils::drawText(number, {cardPosition.x + 14.f, cardPosition.y + 13.f}, module->isEnabled() ? amber : muted, 0.72f);
+            DrawUtils::drawText(module->getName(), {cardPosition.x + 46.f, cardPosition.y + 10.f}, ink, 1.10f);
+            DrawUtils::drawText(fitText(module->getDescription(), moduleSize.x - 30.f, 0.76f), {cardPosition.x + 15.f, cardPosition.y + 42.f}, muted, 0.76f);
+
+            const glm::vec4 powerBox{cardPosition.x + 15.f, cardPosition.y + moduleSize.y - 31.f, 72.f, 20.f};
+            drawImmediateBars({{{powerBox.x, powerBox.y, powerBox.x + powerBox.z, powerBox.y + powerBox.w}, module->isEnabled() ? mce::Color{0.22f, 0.10f, 0.34f, 1.f} : mce::Color{0.10f, 0.07f, 0.13f, 1.f}}, {{powerBox.x, powerBox.y + powerBox.w - 2.f, powerBox.x + powerBox.z, powerBox.y + powerBox.w}, module->isEnabled() ? redline : dim}});
+            DrawUtils::drawText(module->isEnabled() ? "ENABLED" : "DISABLED", {powerBox.x + 10.f, powerBox.y + 5.f}, module->isEnabled() ? amber : ink, 0.72f);
+
+            if (limiter != nullptr && module.get() == limiter) {
+                const std::string tune = "RIGHT CLICK: TUNE  >";
+                DrawUtils::drawText(tune, {cardPosition.x + moduleSize.x - DrawUtils::getTextWidth(tune, 0.74f) - 15.f, powerBox.y + 5.f}, hovered ? ink : amber, 0.74f);
+            }
+
+            if (clickPending && hovered) {
+                module->toggle();
+                clickPending = false;
+            }
+            if (rightClickPending && hovered && limiter != nullptr && module.get() == limiter) {
+                settingsOpen = true;
+                settingsScrollOffset = 0.f;
+                renderedSettingsScrollOffset = 0.f;
+                rightClickPending = false;
             }
         }
+        screenContext->resetClippingRectangle();
 
-        const bool cardHovered = mousePos.x >= posX && mousePos.x < posX + moduleSize.x &&
-            mousePos.y >= posY && mousePos.y < posY + moduleSize.y;
+        if (maxModuleScroll > 0.5f) {
+            const float trackTop = contentPos.y + 12.f;
+            const float trackHeight = contentSize.y - 24.f;
+            const float thumbHeight = std::max(28.f, trackHeight * (contentSize.y / gridHeight));
+            const float thumbTravel = trackHeight - thumbHeight;
+            const float scrollProgress = std::clamp(renderedScrollOffset / maxModuleScroll, 0.f, 1.f);
+            const float thumbTop = trackTop + thumbTravel * scrollProgress;
+            const float trackX = contentPos.x + contentSize.x - 5.f;
 
-        {
-            stack.push();
+            drawImmediateBars({{{trackX, trackTop, trackX + 2.f, trackTop + trackHeight}, {0.20f, 0.13f, 0.27f, 0.78f}}, {{trackX, thumbTop, trackX + 2.f, thumbTop + thumbHeight}, redline}});
 
-            auto& matrix = stack.top().matrix;
-
-            matrix = translate(matrix, {posX, posY, 0.f});
-
-            modMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-
-            stack.pop();
-        }
-        if (cardHovered) {
-            stack.push();
-            stack.top().matrix = translate(stack.top().matrix, {posX, posY, 0.f});
-            modHoverMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-            stack.pop();
-        }
-        if (mod->enabledButtonRegion > 0.f) {
-            DrawUtils::setShaderColor(0.63f, 0.34f, 0.98f, mod->enabledButtonRegion);
-            stack.push();
-            stack.top().matrix = translate(stack.top().matrix, {posX + 1.f, posY + 14.f, 0.f});
-            cardAccentMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-            stack.pop();
-            DrawUtils::setShaderColor();
-        }
-
-        {
-            DrawUtils::setShaderColor(
-                0.2f + 0.42f * mod->enabledButtonRegion,
-                0.21f + 0.13f * mod->enabledButtonRegion,
-                0.27f + 0.71f * mod->enabledButtonRegion, 1.f);
-
-            const glm::vec4 pos{posX + moduleSize.x - 39.f, posY + moduleSize.y - 23.f, 25.f, 10.f};
-
-            stack.push();
-
-            auto& matrix = stack.top().matrix;
-
-            matrix = translate(matrix, {pos.x, pos.y, 0.f});
-
-            enabledStateMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-
-            stack.pop();
-
-            DrawUtils::setShaderColor();
-
-            if (shouldClick && mousePos.x >= pos.x && mousePos.x < pos.x + pos.z && mousePos.y >= pos.y && mousePos.y < pos.y + pos.w) {
-                shouldClick = false;
-                mod->toggle();
+            if (renderedScrollOffset < maxModuleScroll - 1.f) {
+                const std::string scrollHint = "SCROLL FOR MORE  v";
+                const float hintWidth = DrawUtils::getTextWidth(scrollHint, 0.72f);
+                const float hintX = contentPos.x + (contentSize.x - hintWidth) * 0.5f;
+                const float hintY = contentPos.y + contentSize.y - 19.f;
+                drawImmediateBars({{{hintX - 10.f, hintY - 4.f, hintX + hintWidth + 10.f, hintY + 15.f}, {0.06f, 0.025f, 0.09f, 0.94f}}, {{hintX - 10.f, hintY - 4.f, hintX + hintWidth + 10.f, hintY - 2.f}, redline}});
+                DrawUtils::drawText(scrollHint, {hintX, hintY}, amber, 0.72f);
             }
         }
+    } else if (limiter != nullptr) {
+        screenContext->setClippingRectangle(settingsPos.x, settingsPos.y, settingsPos.x + settingsSize.x, settingsPos.y + settingsSize.y);
+        renderAt(settingsMesh, settingsPos, screenContext, material, stack);
 
-        {
-            stack.push();
+        settingsScrollOffset += wheelDirection * 20.f;
+        wheelDirection = 0;
+        maxSettingsScroll = std::max(0.f, 420.f - settingsSize.y);
+        settingsScrollOffset = std::clamp(settingsScrollOffset, 0.f, maxSettingsScroll);
+        renderedSettingsScrollOffset += (settingsScrollOffset - renderedSettingsScrollOffset) * std::clamp(static_cast<float>(g_Client.deltaTime) * 15.f, 0.f, 1.f);
+        const float sy = settingsPos.y - renderedSettingsScrollOffset;
+        const float clipTop = settingsPos.y + 5.f;
+        const float clipBottom = settingsPos.y + settingsSize.y - 5.f;
+        const auto fullyVisible = [&](const float y, const float height) { return y >= clipTop && y + height <= clipBottom; };
 
-            auto& matrix = stack.top().matrix;
-
-            matrix = translate(matrix, {posX + moduleSize.x - 39.f + radius + (10.f - radius * 2.f) +
-                (25.f - radius * 2.f - (10.f - radius * 2.f) * 2.f) * mod->enabledButtonRegion,
-                posY + moduleSize.y - 18.f, 0.f});
-
-            circle.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-
-            stack.pop();
-        }
-
-        const glm::vec2 textPos = {
-            posX + 15.f,
-            posY + 14.f
-        };
-
-        if (textPos.y + DrawUtils::getFontHeight() >= guiYpos && textPos.y <= guiYpos + guiHeight)
-            DrawUtils::drawText(mod->getName(), textPos, {0.9f, 0.95f, 0.98f, 1.f}, 0.9f);
-
-        if (baritone != nullptr && mod.get() == baritone) {
-            DrawUtils::drawText("Autonomous navigation", {posX + 15.f, posY + 35.f},
-                {0.44f, 0.54f, 0.63f, 1.f}, 0.62f);
-            DrawUtils::drawText("Right click for settings", {posX + 15.f, posY + moduleSize.y - 21.f},
-                {0.64f, 0.48f, 0.92f, 1.f}, 0.56f);
-        }
-    }
-
-    if (baritone != nullptr && baritoneSettingsExpanded) {
-        DrawUtils::getScreenContext()->resetClippingRectangle();
-        stack.push();
-        stack.top().matrix = translate(stack.top().matrix, {settingsPanelPos.x, settingsPanelPos.y, 0.f});
-        settingsMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-        stack.pop();
-
-        auto& controller = baritone->getController();
-        auto& pathOptions = controller.getOptions();
-        auto& executionOptions = controller.getExecutionOptions();
-        auto& renderOptions = controller.getRenderOptions();
-
+        auto& controller = limiter->getController();
+        auto& path = controller.getOptions();
+        auto& execution = controller.getExecutionOptions();
+        auto& visuals = controller.getRenderOptions();
         struct Toggle {
-            const char* name;
+            const char* label;
             bool* value;
         };
+        const std::array dynamics{Toggle{"DIAGONAL LINES", &path.allowDiagonal}, Toggle{"WATER ROUTES", &path.allowWater}, Toggle{"STEP ASSIST", &path.allowAscend}, Toggle{"CONTROLLED DROPS", &path.allowFall}, Toggle{"PARKOUR", &path.allowParkour}, Toggle{"SPRINT", &execution.sprint}, Toggle{"AUTO REPLAN", &controller.getReplanWhenStuck()}, Toggle{"BRIDGE KIT", &path.allowBridge}};
+        const std::array telemetry{Toggle{"ROUTE LINE", &visuals.renderPath}, Toggle{"GOAL MARKER", &visuals.renderGoal}, Toggle{"GOAL PULSE", &visuals.animatedGoal}, Toggle{"SEARCH TRACE", &visuals.renderCalculations}, Toggle{"X-RAY ROUTE", &visuals.renderThroughWalls}};
 
-        const std::array movementToggles{
-            Toggle{"Diagonal", &pathOptions.allowDiagonal},
-            Toggle{"Water", &pathOptions.allowWater},
-            Toggle{"Step Up", &pathOptions.allowAscend},
-            Toggle{"Drops", &pathOptions.allowFall},
-            Toggle{"Parkour", &pathOptions.allowParkour},
-            Toggle{"Sprint", &executionOptions.sprint},
-            Toggle{"Auto Replan", &controller.getReplanWhenStuck()},
-            Toggle{"Build Bridges", &pathOptions.allowBridge},
-        };
-        const std::array visualToggles{
-            Toggle{"Render Path", &renderOptions.renderPath},
-            Toggle{"Render Goal", &renderOptions.renderGoal},
-            Toggle{"Animated Goal", &renderOptions.animatedGoal},
-            Toggle{"Calc Details", &renderOptions.renderCalculations},
-            Toggle{"Through Walls", &renderOptions.renderThroughWalls}
-        };
+        if (fullyVisible(sy + 14.f, 12.f))
+            DrawUtils::drawText("LIMITER / PERFORMANCE TUNING", {settingsPos.x + 18.f, sy + 14.f}, ink, 1.00f);
+        if (fullyVisible(sy + 39.f, 10.f))
+            DrawUtils::drawText("Track behavior, route telemetry, and response", {settingsPos.x + 18.f, sy + 39.f}, muted, 0.72f);
 
-        DrawUtils::drawText("Limiter Settings", {settingsPanelPos.x + 18.f, settingsPanelPos.y + 13.f},
-            {0.92f, 0.97f, 1.f, 1.f}, 1.0f);
-        DrawUtils::drawText("Tune movement behavior and route visualization",
-            {settingsPanelPos.x + 18.f, settingsPanelPos.y + 31.f}, {0.4f, 0.52f, 0.62f, 1.f}, 0.62f);
-
-        constexpr float settingsTop = 54.f;
-        constexpr float headingGap = 18.f;
-        constexpr float rowHeight = 20.f;
         const float columnGap = 24.f;
-        const float columnWidth = (settingsPanelSize.x - 36.f - columnGap) / 2.f;
+        const float columnWidth = (settingsSize.x - 60.f - columnGap) * 0.5f;
+        const float leftX = settingsPos.x + 22.f;
+        const float rightX = leftX + columnWidth + columnGap;
+        const float rowsTop = sy + 84.f;
+        constexpr float rowHeight = 27.f;
 
-        auto drawColumn = [&](const char* heading, const auto& toggles, const float x) {
-            DrawUtils::drawText(heading, {x, settingsPanelPos.y + settingsTop}, {0.65f, 0.4f, 0.98f, 1.f}, 0.78f);
-
-            for (std::size_t index = 0; index < toggles.size(); ++index) {
-                const auto& toggle = toggles[index];
-                const float rowY = settingsPanelPos.y + settingsTop + headingGap + static_cast<float>(index) * rowHeight;
-                const glm::vec4 hitbox{x - 3.f, rowY - 3.f, columnWidth, rowHeight - 1.f};
-
-                if (shouldClick && mousePos.x >= hitbox.x && mousePos.x < hitbox.x + hitbox.z &&
-                    mousePos.y >= hitbox.y && mousePos.y < hitbox.y + hitbox.w) {
+        auto drawToggleColumn = [&](const char* title, const auto& toggles, const float x) {
+            if (fullyVisible(sy + 63.f, 10.f))
+                DrawUtils::drawText(title, {x, sy + 63.f}, amber, 0.74f);
+            for (std::size_t i = 0; i < toggles.size(); ++i) {
+                const auto& toggle = toggles[i];
+                auto& toggleAmount = toggleAnimations[toggle.value];
+                toggleAmount += ((*toggle.value ? 1.f : 0.f) - toggleAmount) * std::clamp(static_cast<float>(g_Client.deltaTime) * 18.f, 0.f, 1.f);
+                const float rowY = rowsTop + static_cast<float>(i) * rowHeight;
+                if (!fullyVisible(rowY - 2.f, 16.f))
+                    continue;
+                const glm::vec4 rowBox{x - 4.f, rowY - 4.f, columnWidth + 8.f, 20.f};
+                if (clickPending && contains(rowBox, mousePos)) {
                     *toggle.value = !*toggle.value;
-                    shouldClick = false;
+                    clickPending = false;
                 }
-
-                DrawUtils::drawText(toggle.name, {x, rowY}, {0.78f, 0.84f, 0.9f, 1.f}, 0.76f);
-
-                const float switchX = x + columnWidth - 25.f;
-                DrawUtils::setShaderColor(*toggle.value ? 0.62f : 0.2f,
-                    *toggle.value ? 0.34f : 0.21f, *toggle.value ? 0.98f : 0.27f, 1.f);
-                stack.push();
-                stack.top().matrix = translate(stack.top().matrix, {switchX, rowY - 1.f, 0.f});
-                enabledStateMesh.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-                stack.pop();
-
+                DrawUtils::drawText(toggle.label, {x, rowY}, *toggle.value ? ink : muted, 0.74f);
+                const float switchX = x + columnWidth - 30.f;
+                DrawUtils::setShaderColor(0.30f + 0.30f * toggleAmount, 0.24f + 0.01f * toggleAmount, 0.36f + 0.64f * toggleAmount, 1.f);
+                renderAt(toggleTrackMesh, {switchX, rowY - 1.f}, screenContext, material, stack);
                 DrawUtils::setShaderColor();
-                stack.push();
-                const float knobX = switchX + radius + (10.f - radius * 2.f) +
-                    (25.f - radius * 2.f - (10.f - radius * 2.f) * 2.f) * (*toggle.value ? 1.f : 0.f);
-                stack.top().matrix = translate(stack.top().matrix, {knobX, rowY + 4.f, 0.f});
-                circle.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-                stack.pop();
+                DrawUtils::setShaderColor(*toggle.value ? 1.f : 0.62f, *toggle.value ? 0.72f : 0.65f, *toggle.value ? 0.28f : 0.67f, 1.f);
+                renderAt(knobMesh, {switchX + 7.f + 12.f * toggleAmount, rowY + 4.f}, screenContext, material, stack);
+                DrawUtils::setShaderColor();
             }
         };
-
-        drawColumn("MOVEMENT", movementToggles, settingsPanelPos.x + 14.f);
-        drawColumn("VISUALS", visualToggles, settingsPanelPos.x + 14.f + columnWidth + columnGap);
+        drawToggleColumn("DRIVING DYNAMICS", dynamics, leftX);
+        drawToggleColumn("TELEMETRY", telemetry, rightX);
 
         constexpr float minimumSmoothness = 0.25f;
         constexpr float maximumSmoothness = 10.f;
-        constexpr int minimumBridgeLength = 1;
-        constexpr int maximumBridgeLength = 16;
-        constexpr float sliderGap = 24.f;
-        const float controlsX = settingsPanelPos.x + 18.f;
-        const float sliderWidth = (settingsPanelSize.x - 36.f - sliderGap) / 2.f;
-        const float bridgeSliderX = controlsX;
-        const float rotationSliderX = controlsX + sliderWidth + sliderGap;
-        const float sliderY = settingsPanelPos.y + settingsTop + headingGap +
-            static_cast<float>(std::max(movementToggles.size(), visualToggles.size())) * rowHeight + 18.f;
-        const glm::vec4 bridgeSliderHitbox{bridgeSliderX - 4.f, sliderY + 12.f, sliderWidth + 8.f, 20.f};
-        const glm::vec4 rotationSliderHitbox{rotationSliderX - 4.f, sliderY + 12.f, sliderWidth + 8.f, 20.f};
-
-        if (shouldClick && mousePos.x >= bridgeSliderHitbox.x && mousePos.x < bridgeSliderHitbox.x + bridgeSliderHitbox.z &&
-            mousePos.y >= bridgeSliderHitbox.y && mousePos.y < bridgeSliderHitbox.y + bridgeSliderHitbox.w) {
-            bridgeLengthSliderDragging = true;
-            shouldClick = false;
-        } else if (shouldClick && mousePos.x >= rotationSliderHitbox.x && mousePos.x < rotationSliderHitbox.x + rotationSliderHitbox.z &&
-            mousePos.y >= rotationSliderHitbox.y && mousePos.y < rotationSliderHitbox.y + rotationSliderHitbox.w) {
-            rotationSliderDragging = true;
-            shouldClick = false;
+        constexpr int minimumBridge = 1;
+        constexpr int maximumBridge = 16;
+        const float sliderY = sy + 323.f;
+        const float sliderWidth = columnWidth;
+        const float bridgeFraction = static_cast<float>(path.maxBridgeLength - minimumBridge) / static_cast<float>(maximumBridge - minimumBridge);
+        const float rotationFraction = std::clamp((execution.rotationSmoothness - minimumSmoothness) / (maximumSmoothness - minimumSmoothness), 0.f, 1.f);
+        const glm::vec4 bridgeHit{leftX - 4.f, sliderY - 4.f, sliderWidth + 8.f, 34.f};
+        const glm::vec4 rotationHit{rightX - 4.f, sliderY - 4.f, sliderWidth + 8.f, 34.f};
+        const bool slidersVisible = fullyVisible(sliderY - 23.f, 39.f);
+        if (slidersVisible && clickPending && contains(bridgeHit, mousePos)) {
+            bridgeDragging = true;
+            clickPending = false;
+        } else if (slidersVisible && clickPending && contains(rotationHit, mousePos)) {
+            rotationDragging = true;
+            clickPending = false;
         }
-        if (bridgeLengthSliderDragging) {
-            const float fraction = std::clamp((mousePos.x - bridgeSliderX) / sliderWidth, 0.f, 1.f);
-            pathOptions.maxBridgeLength = std::clamp(
-                static_cast<int>(std::round(minimumBridgeLength + fraction *
-                    static_cast<float>(maximumBridgeLength - minimumBridgeLength))),
-                minimumBridgeLength, maximumBridgeLength);
+        if (bridgeDragging) {
+            const float fraction = std::clamp((mousePos.x - leftX) / sliderWidth, 0.f, 1.f);
+            path.maxBridgeLength = std::clamp(static_cast<int>(std::round(minimumBridge + fraction * (maximumBridge - minimumBridge))), minimumBridge, maximumBridge);
         }
-        if (rotationSliderDragging) {
-            const float fraction = std::clamp((mousePos.x - rotationSliderX) / sliderWidth, 0.f, 1.f);
-            executionOptions.rotationSmoothness = minimumSmoothness + fraction * (maximumSmoothness - minimumSmoothness);
+        if (rotationDragging) {
+            const float fraction = std::clamp((mousePos.x - rightX) / sliderWidth, 0.f, 1.f);
+            execution.rotationSmoothness = minimumSmoothness + fraction * (maximumSmoothness - minimumSmoothness);
         }
 
-        const auto bridgeLabel = std::format("Max Bridge Gap: {} blocks", pathOptions.maxBridgeLength);
-        const auto smoothnessLabel = std::format("Rotation Speed: {:.2f}x", executionOptions.rotationSmoothness);
-        DrawUtils::drawText(bridgeLabel, {bridgeSliderX, sliderY}, {0.88f, 0.9f, 0.94f, 1.f}, 0.72f);
-        DrawUtils::drawText(smoothnessLabel, {rotationSliderX, sliderY}, {0.88f, 0.9f, 0.94f, 1.f}, 0.72f);
-        const float trackY = sliderY + 21.f;
-        const float bridgeFraction = static_cast<float>(pathOptions.maxBridgeLength - minimumBridgeLength) /
-            static_cast<float>(maximumBridgeLength - minimumBridgeLength);
-        const float rotationFraction = (executionOptions.rotationSmoothness - minimumSmoothness) /
-            (maximumSmoothness - minimumSmoothness);
-
-        auto* sliderTessellator = DrawUtils::getTessellator();
-        sliderTessellator->begin();
-        DrawUtils::addFilledRectangle({bridgeSliderX, trackY - 1.5f, bridgeSliderX + sliderWidth, trackY + 1.5f},
-            {0.18f, 0.22f, 0.28f, 1.f}, 1.f);
-        DrawUtils::addFilledRectangle({bridgeSliderX, trackY - 1.5f, bridgeSliderX + sliderWidth * bridgeFraction, trackY + 1.5f},
-            {0.62f, 0.34f, 0.98f, 1.f}, 1.f);
-        DrawUtils::addFilledRectangle({rotationSliderX, trackY - 1.5f, rotationSliderX + sliderWidth, trackY + 1.5f},
-            {0.18f, 0.22f, 0.28f, 1.f}, 1.f);
-        DrawUtils::addFilledRectangle({rotationSliderX, trackY - 1.5f, rotationSliderX + sliderWidth * rotationFraction, trackY + 1.5f},
-            {0.62f, 0.34f, 0.98f, 1.f}, 1.f);
-        MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), sliderTessellator, DrawUtils::getUIFillColor());
-
-        DrawUtils::setShaderColor(0.62f, 0.34f, 0.98f, 1.f);
-        stack.push();
-        stack.top().matrix = translate(stack.top().matrix, {bridgeSliderX + sliderWidth * bridgeFraction, trackY, 0.f});
-        circle.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-        stack.pop();
-        stack.push();
-        stack.top().matrix = translate(stack.top().matrix, {rotationSliderX + sliderWidth * rotationFraction, trackY, 0.f});
-        circle.renderMesh(DrawUtils::getScreenContext()->toMeshContext(), DrawUtils::getUIFillColor());
-        stack.pop();
-        DrawUtils::setShaderColor();
-
-        const std::string closeLabel = "Done  ESC";
-        const float closeX = settingsPanelPos.x + settingsPanelSize.x - DrawUtils::getTextWidth(closeLabel, 0.8f) - 16.f;
-        const float closeY = settingsPanelPos.y + settingsPanelSize.y - 28.f;
-        const glm::vec4 closeHitbox{closeX - 8.f, closeY - 5.f, DrawUtils::getTextWidth(closeLabel, 0.8f) + 16.f, 22.f};
-        if (shouldClick && mousePos.x >= closeHitbox.x && mousePos.x < closeHitbox.x + closeHitbox.z &&
-            mousePos.y >= closeHitbox.y && mousePos.y < closeHitbox.y + closeHitbox.w) {
-            baritoneSettingsExpanded = false;
-            shouldClick = false;
+        const float trackY = sliderY + 10.f;
+        if (slidersVisible) {
+            DrawUtils::drawText(std::format("BRIDGE RANGE  {:02}", path.maxBridgeLength), {leftX, sliderY - 21.f}, ink, 0.72f);
+            DrawUtils::drawText(std::format("STEERING RESPONSE  {:.2f}x", execution.rotationSmoothness), {rightX, sliderY - 21.f}, ink, 0.72f);
+            drawImmediateBars({{{leftX, trackY - 2.f, leftX + sliderWidth, trackY + 2.f}, {0.19f, 0.21f, 0.22f, 1.f}}, {{leftX, trackY - 2.f, leftX + sliderWidth * bridgeFraction, trackY + 2.f}, redline}, {{rightX, trackY - 2.f, rightX + sliderWidth, trackY + 2.f}, {0.19f, 0.21f, 0.22f, 1.f}}, {{rightX, trackY - 2.f, rightX + sliderWidth * rotationFraction, trackY + 2.f}, amber}});
+            DrawUtils::setShaderColor(redline.r, redline.g, redline.b, 1.f);
+            renderAt(knobMesh, {leftX + sliderWidth * bridgeFraction, trackY}, screenContext, material, stack);
+            DrawUtils::setShaderColor(amber.r, amber.g, amber.b, 1.f);
+            renderAt(knobMesh, {rightX + sliderWidth * rotationFraction, trackY}, screenContext, material, stack);
+            DrawUtils::setShaderColor();
         }
-        DrawUtils::drawText(closeLabel, {closeX, closeY}, {0.68f, 0.46f, 1.f, 1.f}, 0.8f);
+
+        const glm::vec4 doneBox{settingsPos.x + settingsSize.x - 92.f, sy + 378.f, 70.f, 24.f};
+        const bool doneVisible = fullyVisible(doneBox.y, doneBox.w);
+        if (doneVisible && clickPending && contains(doneBox, mousePos)) {
+            settingsOpen = false;
+            clickPending = false;
+        }
+        if (doneVisible)
+            DrawUtils::drawText("<  GARAGE", {doneBox.x + 6.f, doneBox.y + 6.f}, amber, 0.72f);
+        screenContext->resetClippingRectangle();
     }
 
-    shouldRightClick = false;
-
-    DrawUtils::getScreenContext()->resetClippingRectangle();
-
-    /*const auto tess = DrawUtils::getTessellator();
-
-    tess->begin();
-
-    DrawUtils::addRoundedOutlinedRectangleBlendChroma(25.f, 25.f, 50.f, 50.f, smoothness, 0.45f, 1.f, outlineSize, 0xF, radius, blend);
-
-    MeshHelpers::renderMeshImmediately(DrawUtils::getScreenContext(), DrawUtils::getTessellator(), DrawUtils::getUIFillColor());*/
+    clickPending = false;
+    rightClickPending = false;
+    screenContext->resetClippingRectangle();
 }
 
-void ClickGui::onKey(int key, bool pressed, bool& cancel) {
+void ClickGui::onKey(const int key, const bool pressed, bool& cancel) {
     if (!g_Client.clickGuiOpened || !pressed)
         return;
-
     cancel = true;
-
     if (key == VK_ESCAPE) {
-        if (baritoneSettingsExpanded)
-            baritoneSettingsExpanded = false;
+        if (settingsOpen)
+            settingsOpen = false;
         else
             setOpen(false);
     }
-    rotationSliderDragging = false;
-    bridgeLengthSliderDragging = false;
+    rotationDragging = false;
+    bridgeDragging = false;
 }
 
 void ClickGui::onMouse(const int button, const bool pressed, bool& cancel) {
     if (!g_Client.clickGuiOpened)
         return;
-
     cancel = true;
-
-    if (button == 1 && !pressed) {
-        rotationSliderDragging = false;
-        bridgeLengthSliderDragging = false;
+    if (!pressed) {
+        if (button == 1) {
+            rotationDragging = false;
+            bridgeDragging = false;
+        }
         return;
     }
-    if (!pressed)
-        return;
-
     if (button == 1)
-        shouldClick = true;
+        clickPending = true;
     else if (button == 2)
-        shouldRightClick = true;
+        rightClickPending = true;
 }
 
 void ClickGui::onWheel(const bool direction, bool& cancel) {
     if (!g_Client.clickGuiOpened)
         return;
-
     cancel = true;
-
-    scrollingDirection = direction ? -1 : 1;
+    wheelDirection = direction ? -1 : 1;
 }
 
 void ClickGui::buildMeshes() {
-    const auto tess = DrawUtils::getTessellator();
-    if (tess == nullptr)
+    auto* tessellator = DrawUtils::getTessellator();
+    if (tessellator == nullptr)
         return;
 
-    { // Dimmed backdrop. This is deliberately material-safe faux blur.
-        tess->begin();
-        DrawUtils::addFilledRectangle({0.f, 0.f, lastClientUIScreenSize.x, lastClientUIScreenSize.y},
-            {0.015f, 0.012f, 0.025f}, 0.16f);
-        tess->end(overlayMesh);
+    tessellator->begin();
+    DrawUtils::addFilledRectangle({0.f, 0.f, lastUiSize.x, lastUiSize.y}, {0.015f, 0.008f, 0.025f, 0.76f}, 0.76f);
+    tessellator->end(overlayMesh);
+
+    tessellator->begin();
+    DrawUtils::addRoundedOutlinedRectangleBlend(guiX, guiY, guiWidth, guiHeight, meshSmoothness, {0.040f, 0.026f, 0.060f, 0.99f}, {0.42f, 0.23f, 0.62f, 1.f}, 1.2f, 0xF, shellRadius, 0.35f);
+    tessellator->end(shellMesh);
+
+    tessellator->begin();
+    DrawUtils::addFilledRectangle({guiX + 2.f, guiY + 3.f, guiX + guiWidth - 2.f, guiY + headerHeight - 1.f}, {0.075f, 0.038f, 0.105f, 1.f}, 1.f);
+    tessellator->end(headerMesh);
+
+    tessellator->begin();
+    DrawUtils::addFilledRectangle({guiX + 2.f, guiY + headerHeight, guiX + sidebarWidth - 1.f, guiY + guiHeight - 3.f}, {0.032f, 0.021f, 0.047f, 0.99f}, 0.99f);
+    tessellator->end(sidebarMesh);
+
+    tessellator->begin();
+    DrawUtils::addFilledRectangle({guiX + 1.f, guiY + headerHeight - 2.f, guiX + guiWidth - 1.f, guiY + headerHeight}, redline, 1.f);
+    DrawUtils::addFilledRectangle({guiX + sidebarWidth - 1.f, guiY + headerHeight, guiX + sidebarWidth, guiY + guiHeight - 1.f}, {0.30f, 0.17f, 0.42f, 1.f}, 1.f);
+    for (int tick = 0; tick < 8; ++tick) {
+        const float x = guiX + guiWidth - 150.f + tick * 13.f;
+        DrawUtils::addFilledRectangle({x, guiY + 1.f, x + 5.f, guiY + 4.f}, tick > 5 ? amber : mce::Color{0.38f, 0.24f, 0.50f, 1.f}, 1.f);
     }
+    tessellator->end(redlineMesh);
 
-    { // Soft outer shadow
-        tess->begin();
-        DrawUtils::addRoundedRectangle(guiXpos - 5.f, guiYpos + 3.f, guiWidth + 10.f, guiHeight + 8.f,
-            smoothness, {0.f, 0.f, 0.f, 0.28f}, 0xF, panelRadius + 2.f);
-        tess->end(shadowMesh);
-    }
+    tessellator->begin();
+    DrawUtils::addOutlinedPartialCircleBlend({0.f, 0.f}, -135.f, 135.f, meshSmoothness, {0.02f, 0.02f, 0.02f, 0.f}, {0.40f, 0.27f, 0.53f, 1.f}, 3.f, 43.f, 0.55f);
+    DrawUtils::addOutlinedPartialCircleBlend({0.f, 0.f}, -135.f, 42.f, meshSmoothness, {0.02f, 0.02f, 0.02f, 0.f}, redline, 2.f, 38.f, 0.55f);
+    tessellator->end(gaugeMesh);
 
-    { // Frosted main surface
-        tess->begin();
-        DrawUtils::addRoundedOutlinedRectangleBlend(guiXpos, guiYpos, guiWidth, guiHeight, smoothness,
-            {0.035f, 0.032f, 0.052f, 0.74f}, {0.32f, 0.2f, 0.5f, 0.95f},
-            0.8f, 0xF, panelRadius, 0.62f);
-        tess->end(bgMesh);
-    }
+    tessellator->begin();
+    DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, moduleSize.x, moduleSize.y, meshSmoothness, {0.070f, 0.045f, 0.092f, 0.99f}, {0.38f, 0.23f, 0.51f, 1.f}, 1.f, 0xF, cardRadius, 0.40f);
+    tessellator->end(cardMesh);
 
-    { // Sidebar glass
-        tess->begin();
-        const float sidebarWidth = modulesSectionPos.x - guiXpos;
-        DrawUtils::addRoundedRectangle(guiXpos + 1.f, guiYpos + 1.f, sidebarWidth - 1.f, guiHeight - 2.f,
-            smoothness, {0.025f, 0.022f, 0.04f, 0.66f}, 0xA, panelRadius - 1.f);
-        tess->end(sidebarMesh);
-    }
+    tessellator->begin();
+    DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, moduleSize.x, moduleSize.y, meshSmoothness, {0.30f, 0.15f, 0.45f, 0.28f}, {0.68f, 0.42f, 1.f, 0.90f}, 1.f, 0xF, cardRadius, 0.45f);
+    tessellator->end(cardHoverMesh);
 
-    { // Selected navigation pill (local coordinates)
-        tess->begin();
-        const float sidebarWidth = modulesSectionPos.x - guiXpos;
-        DrawUtils::addRoundedRectangle(0.f, 0.f, sidebarWidth - 20.f, 31.f, smoothness,
-            {0.2f, 0.1f, 0.32f, 0.72f}, 0xF, 3.f);
-        tess->end(navMesh);
-    }
+    tessellator->begin();
+    DrawUtils::addRoundedRectangle(0.f, 0.f, 4.f, moduleSize.y, meshSmoothness, redline, 0x5, 2.f);
+    DrawUtils::addFilledRectangle({10.f, moduleSize.y - 3.f, moduleSize.x - 10.f, moduleSize.y - 1.f}, {0.48f, 0.17f, 0.82f, 1.f}, 1.f);
+    tessellator->end(cardActiveMesh);
 
-    { // Hairline separators
-        tess->begin();
-        DrawUtils::addFilledRectangle({guiXpos + 1.f, guiYpos + 1.f,
-            guiXpos + guiWidth - 1.f, guiYpos + 3.f}, {0.62f, 0.34f, 0.98f}, 0.95f);
-        DrawUtils::addFilledRectangle({modulesSectionPos.x - 0.5f, guiYpos + 1.f,
-            modulesSectionPos.x + 0.5f, guiYpos + guiHeight - 1.f}, {0.3f, 0.22f, 0.4f}, 0.7f);
-        DrawUtils::addFilledRectangle({modulesSectionPos.x, modulesSectionPos.y - 0.5f,
-            guiXpos + guiWidth - 1.f, modulesSectionPos.y + 0.5f}, {0.3f, 0.22f, 0.4f}, 0.55f);
-        tess->end(lineMesh);
-    }
+    tessellator->begin();
+    DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, settingsSize.x, settingsSize.y, meshSmoothness, {0.052f, 0.033f, 0.072f, 1.f}, {0.36f, 0.21f, 0.49f, 1.f}, 1.f, 0xF, cardRadius, 0.35f);
+    tessellator->end(settingsMesh);
 
-    { // Module card
-        tess->begin();
-        DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, moduleSize.x, moduleSize.y, smoothness,
-            {0.045f, 0.042f, 0.062f, 0.62f}, {0.25f, 0.2f, 0.34f, 0.88f},
-            0.75f, 0xF, 3.f, 0.58f);
-        tess->end(modMesh);
-    }
+    tessellator->begin();
+    DrawUtils::addRoundedRectangle(0.f, 0.f, 26.f, 11.f, meshSmoothness, {1.f, 1.f, 1.f, 1.f}, 0xF, 5.5f);
+    tessellator->end(toggleTrackMesh);
 
-    { // Hover sheen
-        tess->begin();
-        DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, moduleSize.x, moduleSize.y, smoothness,
-            {0.11f, 0.07f, 0.16f, 0.25f}, {0.58f, 0.34f, 0.9f, 0.72f},
-            0.65f, 0xF, 3.f, 0.58f);
-        tess->end(modHoverMesh);
-    }
-
-    { // Enabled accent rail
-        tess->begin();
-        DrawUtils::addRoundedRectangle(0.f, 0.f, 3.f, 34.f, smoothness,
-            {1.f, 1.f, 1.f, 1.f}, 0xF, 1.5f);
-        tess->end(cardAccentMesh);
-    }
-
-    { // Settings panel
-        tess->begin();
-        DrawUtils::addRoundedOutlinedRectangleBlend(0.f, 0.f, settingsPanelSize.x, settingsPanelSize.y, smoothness,
-            {0.035f, 0.032f, 0.052f, 0.82f}, {0.48f, 0.28f, 0.76f, 0.82f},
-            0.8f, 0xF, 4.f, 0.62f);
-        tess->end(settingsMesh);
-    }
-
-    { // Enabled button state background
-        tess->begin();
-
-        DrawUtils::addRoundedRectangle(0.f, 0.f, 25.f, 10.f, smoothness, {}, 0xF, radius);
-
-        tess->end(enabledStateMesh);
-    }
-
-    { // Enabled button
-        tess->begin();
-
-        DrawUtils::addCircle({}, smoothness, {}, radius);
-
-        tess->end(circle);
-    }
+    tessellator->begin();
+    DrawUtils::addCircle({}, meshSmoothness, {1.f, 1.f, 1.f, 1.f}, 4.f);
+    tessellator->end(knobMesh);
 }

@@ -1,13 +1,17 @@
 #include "ModuleManager.h"
 
-#include "Modules/BaritoneModule.h"
-#include "Modules/FullBrightModule.h"
+#include "CameraTweaksModule.h"
+#include "FullBrightModule.h"
+#include "GuiMoveModule.h"
+#include "LimiterModule.h"
 
 ModuleManager g_modMgr;
 
 void ModuleManager::init() {
-    this->addModule<BaritoneModule>();
+    this->addModule<LimiterModule>();
+    this->addModule<CameraTweaksModule>();
     this->addModule<FullBrightModule>();
+    this->addModule<GuiMoveModule>();
 }
 
 void ModuleManager::shutdown() {
@@ -54,8 +58,8 @@ void ModuleManager::onRenderLevel() {
 }
 
 bool ModuleManager::handleChat(const std::string& message) {
-    const auto baritone = this->getModule<BaritoneModule>();
-    return baritone != nullptr && baritone->handleChat(message);
+    const auto limiter = this->getModule<LimiterModule>();
+    return limiter != nullptr && limiter->handleChat(message);
 }
 
 size_t ModuleManager::getModuleCount() const {

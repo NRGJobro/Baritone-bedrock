@@ -7,7 +7,6 @@ public:
 
 	void find();
 	[[nodiscard]] bool isScanned() const;
-	[[nodiscard]] bool isValid() const;
 
 	template <hat::fixed_string str>
 	static Signature create() {

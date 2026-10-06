@@ -37,11 +37,5 @@ namespace mce {
         bool isValid() const;
 
         void renderMesh(MeshContext* meshContext, MaterialPtr* material) const;
-
-    private:
-        void renderMeshFull(MeshContext* meshContext, MaterialPtr* material, StaticVector<std::variant<std::monostate, TexturePtr, ClientTexture>, 8> textures,
-            uint32_t startOffset, uint32_t count,
-            const std::variant<std::monostate, UIActorOffscreenCaptureDescription, UIThumbnailMeshOffscreenCaptureDescription, UIMeshOffscreenCaptureDescription, UIStructureVolumeOffscreenCaptureDescription>& variant,
-            void* overrideIndexBuffer, const std::optional<dragon::RenderMetadata>& metadata) const;
     };
 }

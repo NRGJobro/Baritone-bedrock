@@ -11,9 +11,6 @@
 
 class ScreenContext : public UIScreenContext, public mce::MeshContext {
 public:
-    // idk what was removed
-    //void* renderDevice;
-    //void* renderSettings;
     void* frameBufferObject;
     mce::ViewportInfo* viewport;
     Bedrock::NonOwnerPointerRef<GuiData> guiData;

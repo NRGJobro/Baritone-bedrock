@@ -46,9 +46,6 @@ class PathExecutor {
     int ascendLaunchTicks = 0;
     int ascendRetries = 0;
     int ascendRetryDelay = 0;
-    bool movementModeCaptured = false;
-    bool previousCameraRelativeMovement = true;
-    bool previousRotationControlledByMovement = false;
     bool pathRotationActive = false;
     bool visualYawInitialized = false;
     float pathMovementYaw = 0.f;
@@ -70,6 +67,7 @@ class PathExecutor {
     float rotationSmoothness = 1.f;
     int bridgeNextStep = 1;
     int bridgePlacementWait = 0;
+    int bridgePlacementAttempts = 0;
     std::size_t activeBridgeIndex = static_cast<std::size_t>(-1);
     int bridgeHotbarSlot = -1;
     int previousBridgeHotbarSlot = -1;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Module.h"
+#include "Module.h"
 
 class FullBrightModule final : public Module {
     float intensity = 25.f;

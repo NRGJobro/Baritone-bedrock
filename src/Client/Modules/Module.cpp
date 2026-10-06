@@ -6,19 +6,19 @@ std::string Module::getName() {
     return "Module";
 }
 
-void Module::onEnable() { }
+void Module::onEnable() {}
 
-void Module::onDisable() { }
+void Module::onDisable() {}
 
-void Module::onTick() { }
+void Module::onTick() {}
 
-void Module::onPostTick() { }
+void Module::onPostTick() {}
 
-void Module::onBeforeRenderLevel() { }
+void Module::onBeforeRenderLevel() {}
 
-void Module::onAfterRenderLevel() { }
+void Module::onAfterRenderLevel() {}
 
-void Module::onRenderLevel() { }
+void Module::onRenderLevel() {}
 
 const std::string& Module::getDescription() {
     return this->description;

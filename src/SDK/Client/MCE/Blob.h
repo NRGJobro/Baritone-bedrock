@@ -32,11 +32,9 @@ namespace mce {
         [[nodiscard]] inline size_t getSize() const { return size; }
 
         Blob() = default;
-        Blob(const value_type* data, size_t size);
-        Blob(const Blob& other);
+        Blob(const Blob&) = delete;
+        Blob& operator=(const Blob&) = delete;
 
-        Blob& operator=(const Blob& other);
-
-        static void defaultDeleter(pointer p);
+        static void defaultDeleter(pointer p) { delete[] p; }
     };
 }

@@ -5,14 +5,18 @@
 class ModuleManager {
     struct moduleSort {
         bool operator()(const std::shared_ptr<Module>& first, const std::shared_ptr<Module>& second) const {
-            return first->getName() < second->getName();
+            const auto firstName = first->getName();
+            const auto secondName = second->getName();
+            if ((firstName == "Limiter") != (secondName == "Limiter"))
+                return firstName == "Limiter";
+            return firstName < secondName;
         }
     };
 
     std::map<uint32_t, std::shared_ptr<Module>> modules;
     std::set<std::shared_ptr<Module>, moduleSort> sortedModules;
 
-    template<typename T>
+    template <typename T>
     void addModule() {
         auto mod = std::make_shared<T>();
         this->modules.insert({entt::type_hash<T>::value(), mod});
