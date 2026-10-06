@@ -312,6 +312,43 @@ void MiningProcess::cancel(BaritoneController& controller) {
     restoreBreakPolicy(controller);
 }
 
+void MiningProcess::resetForWorldChange(BaritoneController& controller) {
+    // Never call GameMode, inventory, actor-registry, or BlockSource methods
+    // here. A dimension/world transition may have invalidated every one of
+    // those objects before the update hook observes the pointer change.
+    restoreBreakPolicy(controller);
+    active = false;
+    fixedTargetMode = false;
+    continueMining = false;
+    blockIds.clear();
+    blockNames.clear();
+    candidates.clear();
+    activePatch.clear();
+    fixedTargets.clear();
+    blacklist.clear();
+    noVisibleTargetPosition.reset();
+    pathingTarget.reset();
+    breakingTarget.reset();
+    pendingPickupTargets.clear();
+    pendingPickupActors.clear();
+    knownActorIds.clear();
+    pickupActor.reset();
+    pickupTarget.reset();
+    pickupGoal.reset();
+    breakingTargetCountsGoal = true;
+    pendingCompletion = false;
+    collectingDrops = false;
+    actorSnapshotInitialized = false;
+    pickupTicks = 0;
+    pickupPathAttempts = 0;
+    desiredQuantity = 0;
+    minedQuantity = 0;
+    breakTicks = 0;
+    previousHotbarSlot = -1;
+    pendingMessage.reset();
+    controller.resetForWorldChange();
+}
+
 void MiningProcess::tick(BaritoneController& controller) {
     if (!active)
         return;
