@@ -4,6 +4,8 @@
 
 namespace MC {
     void init();
+    void setClientInstance(ClientInstance* instance);
+    void reset();
 
     HWND getWindowHandle();
     MinecraftGame* getMinecraftGame();
