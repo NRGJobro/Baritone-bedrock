@@ -17,7 +17,6 @@ namespace baritone::bedrock_block_breaking {
 namespace {
 
 struct PendingBreak {
-    LocalPlayer* player = nullptr;
     glm::ivec3 target{};
     FacingID face = FacingID::Unknown;
     float pitch = 0.f;
@@ -98,7 +97,6 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
             pendingAbort = pendingBreak->target;
         }
         pendingBreak = PendingBreak{};
-        pendingBreak->player = player;
         pendingBreak->target = target;
         pendingBreak->face = face;
         pendingBreak->pitch = pitch;
@@ -107,7 +105,6 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
         logF("[BlockBreakState] begin pos=({}, {}, {}) ticks={}",
             target.x, target.y, target.z, pendingBreak->requiredTicks);
     } else {
-        pendingBreak->player = player;
         pendingBreak->face = face;
         pendingBreak->pitch = pitch;
         pendingBreak->yaw = yaw;
@@ -291,6 +288,11 @@ void rewritePlayerAuthInput(PlayerAuthInputPacket& packet) {
 
 void flushCommit() {
     // Completion is injected into the outgoing PlayerAuthInput packet above.
+}
+
+void reset() {
+    pendingBreak.reset();
+    pendingAbort.reset();
 }
 
 } // namespace baritone::bedrock_block_breaking
