@@ -1,11 +1,12 @@
 #pragma once
 
-#include "../Network/LoopbackPacketSender.h"
-#include "../Render/Level/LevelRenderer.h"
-#include "../World/Actor/LocalPlayer.h"
-#include "../World/BlockSource.h"
-#include "GUI/GuiData.h"
-#include "MCE/Camera.h"
+class MinecraftGame;
+class LevelRenderer;
+class LoopbackPacketSender;
+class GuiData;
+class BlockSource;
+class LocalPlayer;
+namespace mce { class Camera; }
 
 class ClientInstance {
 public:
