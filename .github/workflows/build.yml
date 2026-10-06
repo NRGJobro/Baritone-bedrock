@@ -5,6 +5,10 @@ on:
     branches: [master]
   workflow_dispatch:
 
+concurrency:
+  group: limiter-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-release:
     runs-on: windows-latest
