@@ -1,14 +1,11 @@
 #pragma once
 
-#include "../Level/Level.h"
-#include "Components/StateVectorComponent.h"
-#include "Components/ActorRotationComponent.h"
-#include "Components/ActorHeadRotationComponent.h"
-#include "Components/MobBodyRotationComponent.h"
-#include "Components/MovementFlags.h"
 #include "EntityContext/EntityContext.h"
 
 #include <cstdint>
+
+class Level;
+struct StateVectorComponent;
 
 // Source used by Bedrock's native arm-swing animation. Mine is the same
 // first-person animation triggered by a normal pickaxe/block break.
