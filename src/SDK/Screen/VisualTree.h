@@ -1,6 +1,6 @@
 #pragma once
 
-#include "UIControl.h"
+class UIControl;
 
 class VisualTree {
 public:
