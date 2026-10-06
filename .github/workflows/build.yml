@@ -1,0 +1,22 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B out/ci -G Ninja -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DLIMITER_BUILD_TESTS=ON
+      - name: Build
+        shell: pwsh
+        run: cmake --build out/ci --config Release
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir out/ci --output-on-failure -C Release
