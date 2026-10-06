@@ -1,9 +1,13 @@
 #pragma once
 
-#include "../Client/MCE/BufferResourceService.h"
 #include "../Client/MCE/Mesh.h"
 #include "../Client/MCE/MeshData.h"
-#include "TessellatorQuadInfo.h"
+
+struct TessellatorQuadInfo {
+    std::uint8_t facing;
+    bool twoFace;
+    glm::vec3 centroid;
+};
 
 class Tessellator {
     bool isFormatFixed;
