@@ -7,6 +7,7 @@
 #include "../SDK/Render/CaretMeasureData.h"
 #include "../SDK/Render/MinecraftUIRenderContext.h"
 #include "../SDK/Render/ScreenContext.h"
+#include "../SDK/Render/ShaderColor.h"
 #include "../SDK/Render/Tessellator.h"
 #include "../SDK/Render/TextMeasureData.h"
 #include "TimeUtils.h"
