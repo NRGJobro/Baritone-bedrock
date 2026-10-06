@@ -6,6 +6,8 @@
 #include "../../SDK/World/Actor/Components/MobBodyRotationComponent.h"
 #include "../../SDK/World/Actor/GameMode.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
+#include "../../SDK/World/Block/Block.h"
+#include "../../SDK/World/Block/BlockLegacy.h"
 #include "../../SDK/World/BlockSource.h"
 #include "../../Utils/Logger.h"
 
