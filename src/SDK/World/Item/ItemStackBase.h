@@ -1,8 +1,7 @@
 #pragma once
 
 #include "../../Core/Refs/WeakPtr.h"
-#include "Item.h"
-
+class Item;
 class Block;
 class BlockLegacy;
 class CompoundTag;
