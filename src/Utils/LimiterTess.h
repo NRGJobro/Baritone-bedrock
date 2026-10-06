@@ -1,12 +1,11 @@
 #pragma once
 
-#include "../SDK/Client/MCE/Color.h"
-
 #include <array>
 #include <utility>
 #include <vector>
 
 class ScreenContext;
+namespace mce { class Color; }
 
 // Limiter's 3D tessellation API, backed exclusively by the current SDK.
 class LimiterTess {
