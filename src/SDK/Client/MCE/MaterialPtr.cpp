@@ -2,7 +2,8 @@
 
 #include "../../../Memory/Sig/SignatureManager.h"
 #include "../../../Utils/Utils.h"
-#include "../../Render/RenderMaterialGroup.h"
+
+struct RenderMaterialGroup;
 
 mce::MaterialPtr* mce::MaterialPtr::createMaterial(const HashedString& name) {
     static RenderMaterialGroup* materialCreator = nullptr;
