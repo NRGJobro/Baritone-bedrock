@@ -1,14 +1,53 @@
 #include "Mesh.h"
 
 #include "ClientTexture.h"
-#include "../../Render/Resources/UIActorOffscreenCaptureDescription.h"
-#include "../../Render/Resources/UIThumbnailMeshOffscreenCaptureDescription.h"
-#include "../../Render/Resources/UIMeshOffscreenCaptureDescription.h"
-#include "../../Render/Resources/UIStructureVolumeOffscreenCaptureDescription.h"
-#include "../dragon/RenderMetadata.h"
 
 #include "../../../Memory/Sig/SignatureManager.h"
 #include "../../../Utils/Utils.h"
+
+namespace {
+struct OffscreenCaptureData {
+    int unk1;
+    int unk2;
+    mce::ClientTexture texture;
+};
+
+struct UIActorOffscreenCaptureDescription {
+    OffscreenCaptureData captureData;
+    int unk;
+};
+
+struct UIThumbnailMeshOffscreenCaptureDescription {
+    OffscreenCaptureData captureData;
+};
+
+struct UIMeshOffscreenCaptureDescription {
+    OffscreenCaptureData captureData;
+    int unk;
+};
+
+struct UIStructureVolumeOffscreenCaptureDescription {
+    OffscreenCaptureData captureData;
+};
+
+static_assert(sizeof(OffscreenCaptureData) == 0x20);
+static_assert(sizeof(UIActorOffscreenCaptureDescription) == 0x28);
+static_assert(sizeof(UIThumbnailMeshOffscreenCaptureDescription) == 0x20);
+static_assert(sizeof(UIMeshOffscreenCaptureDescription) == 0x28);
+static_assert(sizeof(UIStructureVolumeOffscreenCaptureDescription) == 0x20);
+}
+
+namespace dragon {
+struct RenderMetadata {
+    std::uint64_t id;
+    void* surfaceShaderMetadata;
+    bool unk;
+    std::uint64_t unk2;
+    char pad[0x18];
+    int unk3;
+};
+static_assert(sizeof(RenderMetadata) == 0x40);
+}
 
 mce::Mesh::~Mesh() {
     reset();
