@@ -9,6 +9,10 @@
 #include "../../SDK/World/Block/Block.h"
 #include "../../SDK/World/Block/BlockLegacy.h"
 #include "../../SDK/World/BlockSource.h"
+#include "../../SDK/World/Level/Level.h"
+#include "../../SDK/World/Level/HitResult/HitResult.h"
+#include "../../SDK/World/Level/HitResult/HitResultType.h"
+#include "../../SDK/World/Level/HitResult/HitResultWrapper.h"
 #include "../../Utils/Logger.h"
 
 #include <algorithm>
