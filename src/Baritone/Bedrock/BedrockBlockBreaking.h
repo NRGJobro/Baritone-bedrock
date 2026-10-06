@@ -20,4 +20,9 @@ void rewritePlayerAuthInput(PlayerAuthInputPacket& packet);
 // for that tick has already gone to the server.
 void flushCommit();
 
+// Clear packet-side mining state without dereferencing game objects. This is
+// used for disconnects, dimension changes, and DLL teardown where a cached
+// LocalPlayer/GameMode may already be invalid.
+void reset();
+
 } // namespace baritone::bedrock_block_breaking
