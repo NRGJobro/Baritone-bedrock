@@ -1,6 +1,9 @@
 #include "Player.h"
 #include "LocalPlayer.h"
 
+#include "../Inventory/PlayerInventory.h"
+#include "GameMode.h"
+
 PlayerInventory* Player::getSupplies() {
     return hat::member_at<PlayerInventory*>(this, 0x5B8);
 }
