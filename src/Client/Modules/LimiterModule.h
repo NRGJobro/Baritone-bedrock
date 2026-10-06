@@ -30,6 +30,7 @@ public:
     void onAfterRenderLevel() override;
     void onRenderLevel() override;
 
+    void onWorldChanged();
     bool handleChat(const std::string& message);
     [[nodiscard]] baritone::BaritoneController& getController();
     [[nodiscard]] const baritone::BaritoneController& getController() const;
