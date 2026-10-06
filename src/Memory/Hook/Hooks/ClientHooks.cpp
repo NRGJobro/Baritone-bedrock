@@ -104,8 +104,51 @@ std::uint64_t inputFlagsLowWord(const std::bitset<65>& flags) noexcept {
     return value;
 }
 
+void handleWorldIdentityChange(ClientInstance* instance) {
+    static LocalPlayer* previousPlayer = nullptr;
+    static BlockSource* previousRegion = nullptr;
+    static bool initialized = false;
+
+    auto* currentPlayer = instance == nullptr ? nullptr : instance->getLocalPlayer();
+    auto* currentRegion = instance == nullptr ? nullptr : instance->getBlockSource();
+
+    if (!initialized) {
+        previousPlayer = currentPlayer;
+        previousRegion = currentRegion;
+        initialized = true;
+        return;
+    }
+
+    if (currentPlayer == previousPlayer && currentRegion == previousRegion)
+        return;
+
+    previousPlayer = currentPlayer;
+    previousRegion = currentRegion;
+
+    // Never let pathing/input/packet state survive a LocalPlayer or
+    // BlockSource identity change. Dimension changes can swap either pointer
+    // without unloading the DLL.
+    g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
+    g_Client.hudScreenActive.store(false, std::memory_order_release);
+    g_Client.keys.reset();
+    g_Client.blockedKeys.reset();
+    baritone::bedrock_block_breaking::reset();
+    ClickGui::dismissForWorldChange();
+
+    if (g_Client.modulesReady.load(std::memory_order_acquire)) {
+        if (auto* limiter = g_modMgr.getModule<LimiterModule>())
+            limiter->onWorldChanged();
+    }
+}
+
 void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* packet) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&LoopbackPacketSender_sendToServer);
+    if (!callbackGuard.allowClientCode()) {
+        if (original != nullptr)
+            original(sender, packet);
+        return;
+    }
     if (packet != nullptr) {
         const auto id = packet->getID();
         if (id == MinecraftPacketIds::Text) {
@@ -157,11 +200,18 @@ void LoopbackPacketSender_sendToServer(LoopbackPacketSender* sender, Packet* pac
             logF("[BlockPacket] InventoryTransaction sent");
         }
     }
-    original(sender, packet);
+    if (original != nullptr)
+        original(sender, packet);
 }
 
 void MinecraftGame_grabMouse(void* game) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&MinecraftGame_grabMouse);
+    if (!callbackGuard.allowClientCode()) {
+        if (original != nullptr)
+            original(game);
+        return;
+    }
     // Minecraft calls this routine again during normal world updates. Phase
     // keeps its screen-space ClickGUI interactive by suppressing those
     // recapture attempts until the GUI closes.
@@ -172,9 +222,12 @@ void MinecraftGame_grabMouse(void* game) {
 }
 
 void GameControllerHandler_GameCore_refresh(void* handler) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&GameControllerHandler_GameCore_refresh);
     if (original != nullptr)
         original(handler);
+    if (!callbackGuard.allowClientCode())
+        return;
 
     const auto signature = GET_SIG("MouseDevice::instance");
     if (signature == 0)
@@ -196,7 +249,10 @@ void GameControllerHandler_GameCore_refresh(void* handler) {
 }
 
 bool ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens(void* level) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens);
+    if (!callbackGuard.allowClientCode())
+        return original != nullptr && original(level);
     if (g_Client.clickGuiOpened)
         return false;
     const bool nativeResult = original != nullptr && original(level);
@@ -206,7 +262,13 @@ bool ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens(void* lev
 }
 
 void Actor_baseTick(Actor* actor) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&Actor_baseTick);
+    if (!callbackGuard.allowClientCode()) {
+        if (original != nullptr)
+            original(actor);
+        return;
+    }
     const bool localPlayerTick = actor != nullptr && actor == MC::getLocalPlayer();
     static std::uint64_t movementTraceTick = 0;
     const bool traceMovement = localPlayerTick && (++movementTraceTick % 20 == 0);
@@ -310,9 +372,12 @@ bool feedMouseMessage(const UINT message, const WPARAM wParam) {
 }
 
 LRESULT MainWindow__windowProcCallback(HWND window, const UINT message, const WPARAM wParam, const LPARAM lParam) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&MainWindow__windowProcCallback);
     if (original == nullptr)
         return DefWindowProcW(window, message, wParam, lParam);
+    if (!callbackGuard.allowClientCode())
+        return original(window, message, wParam, lParam);
 
     // Minecraft also consumes Raw Input independently of the ordinary button
     // messages. Swallow it while ClickGUI owns the mouse, otherwise the same
@@ -340,19 +405,31 @@ LRESULT MainWindow__windowProcCallback(HWND window, const UINT message, const WP
 }
 
 bool ClientInstance_update(ClientInstance* instance, const uint32_t updateArgument) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&ClientInstance_update);
     if (original == nullptr)
         return false;
 
-    // The local actor does not exist on menus. Install its stable vtable hook
-    // as soon as a world is joined; HookManager enables late hooks immediately.
+    const bool result = original(instance, updateArgument);
+    MC::setClientInstance(instance);
+
+    if (!callbackGuard.allowClientCode())
+        return result;
+
+    // Inspect identity only after Minecraft finishes the update. This avoids
+    // touching a LocalPlayer/BlockSource while the native update is replacing
+    // it during a disconnect or dimension transition.
+    handleWorldIdentityChange(instance);
     if (instance != nullptr)
         ensureActorBaseTickHook(instance->getLocalPlayer());
-    return original(instance, updateArgument);
+    return result;
 }
 
 float BaseOptions_getGamma(void** options) {
+    HookManager::CallbackGuard callbackGuard;
     static auto original = GET_HOOK(&BaseOptions_getGamma);
+    if (!callbackGuard.allowClientCode())
+        return original == nullptr ? 1.f : original(options);
     const auto fullBright = g_modMgr.getModule<FullBrightModule>();
     if (fullBright != nullptr && fullBright->isEnabled())
         return fullBright->getIntensity();
