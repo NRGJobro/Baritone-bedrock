@@ -977,12 +977,13 @@ void walksThroughShallowDipInsteadOfParkour() {
 }
 
 void keepsRuntimeParkourCameraIndependent() {
-    // The live controller caps parkour at the one-gap form because it preserves
-    // the player's real camera. Longer variants require aligned forward sprint
-    // and are deliberately routed around at runtime.
-    assert(baritone::cameraIndependentParkourDistance(4) == 2);
-    assert(baritone::cameraIndependentParkourDistance(3) == 2);
+    // The executor transforms movement relative to the real camera and handles
+    // runway alignment, so live planning must preserve supported sprint jumps.
+    assert(baritone::cameraIndependentParkourDistance(5) == 4);
+    assert(baritone::cameraIndependentParkourDistance(4) == 4);
+    assert(baritone::cameraIndependentParkourDistance(3) == 3);
     assert(baritone::cameraIndependentParkourDistance(2) == 2);
+    assert(baritone::cameraIndependentParkourDistance(1) == 2);
 }
 
 void miningBuildsOnlyAcrossSafeWater() {
@@ -1030,7 +1031,12 @@ void modelsBedrockPlayerPhysics() {
     assert(!parkourSprintReady(3, false, true, 2, 0.10f));
     assert(parkourSprintReady(3, false, true, 2, 0.20f));
     assert(!parkourSprintReady(2, true, true, 2, 0.10f));
+    assert(!parkourSprintReady(2, false, false, 0, 0.00f));
+    assert(!parkourSprintReady(2, false, false, 0, 0.08f));
     assert(parkourSprintReady(2, false, false, 0, 0.10f));
+    assert(shouldEnterParkourReposition(3, false, false, true, true, false, 0.45f));
+    assert(!shouldEnterParkourReposition(3, true, false, true, true, false, 0.45f));
+    assert(!shouldEnterParkourReposition(3, false, false, true, true, false, 0.20f));
     float walkVelocity = 0.f;
     float sprintVelocity = 0.f;
     for (int tick = 0; tick < 100; ++tick) {
@@ -1043,10 +1049,34 @@ void modelsBedrockPlayerPhysics() {
     assert(projectedAirDisplacement(0.28f, 1.f, true, false, 5) >
         projectedAirDisplacement(0.28f, 0.f, true, false, 5));
     assert(ticksUntilLandingPlane(0.f, jumpVelocity, 0.f) > 1);
+    // Captured three-block jump: the first airborne sample already projects
+    // past the one-block landing and must begin latched air control immediately.
+    assert(shouldBeginParkourAirControl(3, 0.3246f, 3.f, 5.3495f, 4.0835f));
+    assert(!shouldBeginParkourAirControl(3, 0.10f, 3.f, 5.3495f, 4.0835f));
+    assert(!shouldBeginParkourAirControl(2, 0.21f, 2.f, 2.40f, 2.05f));
+    // The working three-gap jump keeps its later, gentler air-control profile.
+    assert(!shouldBeginParkourAirControl(4, 0.3246f, 4.f, 5.20f, 4.20f));
+    assert(shouldBeginParkourAirControl(4, 0.36f, 4.f, 5.20f, 4.20f));
 
     // Shaft centering may release input to coast, but must never command a
     // reversal that can send the player toward the opposite edge.
     assert(shaftCenterInput(0.50f, 0.f) > 0.f);
+
+    // A fall immediately followed by a one-block ascent must not transfer
+    // control while the player is still moving toward the far edge.
+    assert(!settledForJumpTransition(0.05f, -0.04f, 0.12f));
+    assert(!settledForJumpTransition(0.26f, 0.f, 0.01f));
+    assert(settledForJumpTransition(0.12f, -0.10f, 0.03f));
+    assert(jumpTransitionCenterInput(0.35f, 0.f) > 0.f);
+    assert(jumpTransitionCenterInput(0.10f, 0.20f) == 0.f);
+
+    // Rendering/client updates may outnumber native movement ticks. The jump
+    // must remain held until an airborne frame confirms it was consumed.
+    assert(holdJumpUntilAirborne(true, false, true, 1));
+    assert(holdJumpUntilAirborne(true, false, true, 10));
+    assert(!holdJumpUntilAirborne(true, false, true, 11));
+    assert(!holdJumpUntilAirborne(true, true, true, 2));
+    assert(!holdJumpUntilAirborne(true, false, false, 2));
     assert(shaftCenterInput(0.50f, -0.20f) > 0.f);
     assert(shaftCenterInput(0.50f, 0.20f) == 0.f);
     assert(shaftCenterInput(shaftCenteredAxisTolerance, 0.f) == 0.f);

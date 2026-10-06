@@ -1,8 +1,8 @@
 #pragma once
 
-#include "HitResult/HitResultWrapper.h"
+#include "HitResult/HitResult.h"
 
 class Level {
 public:
-    HitResultWrapper* getHitResultWrapper();
+    HitResult* getHitResult();
 };

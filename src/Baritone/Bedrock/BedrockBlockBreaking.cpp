@@ -12,7 +12,6 @@
 #include "../../SDK/World/Level/Level.h"
 #include "../../SDK/World/Level/HitResult/HitResult.h"
 #include "../../SDK/World/Level/HitResult/HitResultType.h"
-#include "../../SDK/World/Level/HitResult/HitResultWrapper.h"
 #include "../../Utils/Logger.h"
 
 #include <algorithm>
@@ -135,20 +134,19 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
     auto* gameMode = player->getGameMode();
     if (pendingBreak->commitPending && !pendingBreak->commitSent &&
         !pendingBreak->nativeCommitArmed) {
-        auto* hitWrapper = player->getLevel() == nullptr
-            ? nullptr : player->getLevel()->getHitResultWrapper();
+        auto* hit = player->getLevel() == nullptr
+            ? nullptr : player->getLevel()->getHitResult();
         std::optional<HitResult> savedHit;
-        if (hitWrapper != nullptr) {
-            savedHit = hitWrapper->hitResult;
-            auto& hit = hitWrapper->hitResult;
-            hit.startPos = player->getPosition();
-            hit.type = HitResultType::Tile;
-            hit.facing = pendingBreak->face;
-            hit.blockPos = pendingBreak->target;
-            hit.pos = faceCenter(pendingBreak->target, pendingBreak->face);
-            const glm::vec3 hitRay = hit.pos - hit.startPos;
+        if (hit != nullptr) {
+            savedHit = *hit;
+            hit->startPos = player->getPosition();
+            hit->type = HitResultType::Tile;
+            hit->facing = pendingBreak->face;
+            hit->blockPos = pendingBreak->target;
+            hit->pos = faceCenter(pendingBreak->target, pendingBreak->face);
+            const glm::vec3 hitRay = hit->pos - hit->startPos;
             const float hitLength = glm::length(hitRay);
-            hit.rayDir = hitLength > 0.0001f ? hitRay / hitLength : glm::vec3{0.f, -1.f, 0.f};
+            hit->rayDir = hitLength > 0.0001f ? hitRay / hitLength : glm::vec3{0.f, -1.f, 0.f};
         }
         // Complete through the same simulation call used by held-mouse mining.
         // Calling destroyBlock directly creates a local prediction but skips
@@ -161,8 +159,8 @@ void tick(LocalPlayer* player, const glm::ivec3& target, const FacingID face,
             auto commitTarget = pendingBreak->target;
             gameMode->destroyBlock(commitTarget, static_cast<std::uint8_t>(pendingBreak->face));
         }
-        if (hitWrapper != nullptr && savedHit)
-            hitWrapper->hitResult = *savedHit;
+        if (hit != nullptr && savedHit)
+            *hit = *savedHit;
         pendingBreak->commitPending = false;
         pendingBreak->nativeCommitArmed = true;
         logF("[BlockBreakState] native completion armed pos=({}, {}, {}) face={} signal={}",

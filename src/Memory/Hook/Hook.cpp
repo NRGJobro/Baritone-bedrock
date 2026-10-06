@@ -10,10 +10,8 @@ Hook::Hook(const uintptr_t& target, void* callback) {
 
     this->valid = status == MH_OK;
 
-#ifndef NDEBUG
     if (!this->valid)
         logF("Failed to create hook: {} ({:#x})", magic_enum::enum_name(status), target);
-#endif
 }
 
 Hook::~Hook() {
@@ -33,11 +31,9 @@ void Hook::enable() {
     const auto status = MH_EnableHook(this->target);
     if (status == MH_OK || status == MH_ERROR_ENABLED)
         this->enabled = true;
-#ifndef NDEBUG
     else
         logF("Failed to enable hook: {} ({:#x})", magic_enum::enum_name(status),
             reinterpret_cast<std::uintptr_t>(this->target));
-#endif
 }
 
 void Hook::disable() {
@@ -47,11 +43,9 @@ void Hook::disable() {
     const auto status = MH_DisableHook(this->target);
     if (status == MH_OK || status == MH_ERROR_DISABLED)
         this->enabled = false;
-#ifndef NDEBUG
     else
         logF("Failed to disable hook: {} ({:#x})", magic_enum::enum_name(status),
             reinterpret_cast<std::uintptr_t>(this->target));
-#endif
 }
 
 void Hook::setEnabled(const bool enabled) {

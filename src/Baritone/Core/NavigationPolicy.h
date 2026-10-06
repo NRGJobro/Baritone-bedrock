@@ -134,7 +134,11 @@ inline bool validSupportedFallLanding(const bool supported, const float heightEr
 }
 
 inline int cameraIndependentParkourDistance(const int configuredDistance) {
-    return std::clamp(configuredDistance, 2, 2);
+    // Movement input is transformed relative to the player's real camera by
+    // the executor, and long jumps have their own alignment/runway controller.
+    // Preserve the configured three- and four-block sprint jumps instead of
+    // silently reducing every live search to a one-gap jump.
+    return std::clamp(configuredDistance, 2, 4);
 }
 
 // Each search uses a copy: fallback must never raise the user's saved budget

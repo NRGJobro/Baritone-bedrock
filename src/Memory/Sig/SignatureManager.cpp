@@ -6,9 +6,9 @@ void SignatureManager::scanAll() {
     std::vector<std::future<void>> futures;
 
     futures.reserve(sigs.size());
-    for (auto &sig : std::views::values(sigs)) {
+    for (const auto& sig : std::views::values(sigs)) {
         if (!sig->isScanned()) {
-            futures.push_back(std::async(std::launch::async, [&sig] {
+            futures.push_back(std::async(std::launch::async, [sig] {
                 sig->find();
             }));
         }

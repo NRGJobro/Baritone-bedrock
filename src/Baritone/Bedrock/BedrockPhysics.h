@@ -29,11 +29,22 @@ constexpr float sprintJumpBoost = 0.20f;
 // 0.06-radius centre caused Bedrock's digital direction flags to repeatedly
 // overshoot and reverse while preparing consecutive downward mines.
 constexpr float shaftCenteredAxisTolerance = 0.18f;
+constexpr float jumpTransitionCenteredAxisTolerance = 0.20f;
+constexpr float jumpTransitionMaximumSpeed = 0.035f;
 
 inline bool shaftFootprintCentered(const float offsetX, const float offsetZ) {
     return std::isfinite(offsetX) && std::isfinite(offsetZ) &&
         std::abs(offsetX) <= shaftCenteredAxisTolerance &&
         std::abs(offsetZ) <= shaftCenteredAxisTolerance;
+}
+
+inline bool settledForJumpTransition(const float offsetX, const float offsetZ,
+    const float horizontalSpeed) {
+    return std::isfinite(offsetX) && std::isfinite(offsetZ) &&
+        std::isfinite(horizontalSpeed) &&
+        std::abs(offsetX) <= jumpTransitionCenteredAxisTolerance &&
+        std::abs(offsetZ) <= jumpTransitionCenteredAxisTolerance &&
+        horizontalSpeed <= jumpTransitionMaximumSpeed;
 }
 
 // Furthest centre position that retains the documented approximate sneak edge
@@ -42,10 +53,35 @@ constexpr float safeTakeoffEdge = 0.5f + playerHalfWidth - sneakEdgeMargin;
 
 inline bool parkourSprintReady(int distance, bool ascending, bool sprintEnabled,
     int sprintTicks, float measuredSpeed) {
+    // A one-block gap does not require sprint, but it still needs real forward
+    // velocity. Predicting the next ground tick from rest can otherwise request
+    // jump before Bedrock has accelerated the player, producing a vertical hop.
     if (distance < 3 && !ascending)
-        return true;
+        return measuredSpeed >= 0.09f;
     const float minimumSpeed = distance >= 4 ? 0.20f : 0.17f;
     return sprintEnabled && sprintTicks >= 2 && measuredSpeed >= minimumSpeed;
+}
+
+inline bool shouldEnterParkourReposition(const int distance,
+    const bool runwayPrepared, const bool jumpIssued, const bool grounded,
+    const bool needsRunway, const bool speedReady, const float along) {
+    // The two-gap controller gets one deliberate return to its runway start.
+    // Once that pass completes, duplicate zero-motion callbacks must not send
+    // it backward again during the forward sprint.
+    const bool preparationAlreadyConsumed = distance == 3 && runwayPrepared;
+    return !preparationAlreadyConsumed && !jumpIssued && grounded &&
+        needsRunway && !speedReady && along >= 0.25f;
+}
+
+inline bool shouldBeginParkourAirControl(const int distance, const float progress,
+    const float jumpLength, const float projectedWithForward,
+    const float projectedCoasting) {
+    const float minimumProgress = distance == 3 ? 0.20f : 0.35f;
+    return std::isfinite(progress) && std::isfinite(jumpLength) &&
+        std::isfinite(projectedWithForward) && std::isfinite(projectedCoasting) &&
+        progress > minimumProgress &&
+        projectedWithForward >= jumpLength - 0.05f &&
+        projectedCoasting >= jumpLength - 0.20f;
 }
 
 inline bool shouldRetryAscent(bool grounded, float feetY, float landingY,
@@ -53,6 +89,14 @@ inline bool shouldRetryAscent(bool grounded, float feetY, float landingY,
     // Contact with a low ceiling or the near edge of the landing is not a
     // failed jump. Retry only after landing back below the intended step.
     return grounded && feetY < landingY - 0.2f && (wasAirborne || launchTicks > 6);
+}
+
+inline bool holdJumpUntilAirborne(const bool jumpIssued, const bool wasAirborne,
+    const bool grounded, const int launchUpdates) {
+    // ClientInstance::update can run several times between 20 Hz movement
+    // simulations. Keep Space down long enough for the native tick to consume
+    // it, but bound the latch so a blocked jump cannot remain held forever.
+    return jumpIssued && !wasAirborne && grounded && launchUpdates <= 10;
 }
 
 inline float waterDropAxisInput(float error, float velocity, bool grounded) {
@@ -91,6 +135,16 @@ inline float groundInputForTargetVelocity(const float alongVelocity,
         acceleration <= 0.0001f)
         return 0.f;
     return std::clamp((targetVelocity - alongVelocity * drag) / acceleration, -1.f, 1.f);
+}
+
+inline float jumpTransitionCenterInput(const float centerDistance,
+    const float velocityTowardCenter) {
+    if (!std::isfinite(centerDistance) || !std::isfinite(velocityTowardCenter) ||
+        centerDistance <= jumpTransitionCenteredAxisTolerance)
+        return 0.f;
+    const float targetVelocity = std::clamp(centerDistance * 0.20f, 0.02f, 0.055f);
+    return std::clamp(groundInputForTargetVelocity(
+        velocityTowardCenter, targetVelocity, false, true), 0.f, 0.35f);
 }
 
 constexpr float cautiousDropSneakReleaseProgress = 0.78f;

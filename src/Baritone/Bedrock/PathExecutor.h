@@ -38,6 +38,8 @@ class PathExecutor {
     bool parkourJumpIssued = false;
     bool parkourWasAirborne = false;
     bool parkourRepositioning = false;
+    bool parkourRunwayPrepared = false;
+    bool parkourAirControlActive = false;
     int parkourSprintTicks = 0;
     int parkourLaunchTicks = 0;
     std::size_t activeAscendIndex = static_cast<std::size_t>(-1);

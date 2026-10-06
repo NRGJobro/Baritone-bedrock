@@ -9,6 +9,5 @@ PlayerInventory* Player::getSupplies() {
 }
 
 GameMode* LocalPlayer::getGameMode() {
-    auto& holder = hat::member_at<std::shared_ptr<GameMode>>(this, 0xAA0);
-    return holder.get();
+    return hat::member_at<GameMode*>(this, 0xAA0);
 }

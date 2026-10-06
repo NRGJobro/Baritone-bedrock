@@ -47,6 +47,18 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
     static auto original = GET_HOOK(&ScreenView_setupAndRender);
     if (original == nullptr)
         return;
+
+    // RenderMaterialGroup is valid while Minecraft is entering the UI render
+    // pass. Creating materials after the native renderer returns accesses a
+    // registry whose frame-local state has already been released (the exact
+    // 1.26.52 crash was inside that registry lookup). Initialize/update the
+    // UI context before forwarding, matching the current Phase render hook.
+    if (callbackGuard.allowClientCode() && screenView != nullptr && renderContext != nullptr) {
+        try {
+            DrawUtils::updateMCUIRC(renderContext);
+        } catch (...) {
+        }
+    }
     original(screenView, renderContext);
 
     if (!callbackGuard.allowClientCode())
@@ -74,7 +86,6 @@ void ScreenView_setupAndRender(ScreenView* screenView, MinecraftUIRenderContext*
     if (name != "debug_screen")
         return;
 
-    DrawUtils::updateMCUIRC(renderContext);
     DrawUtils::setShaderColor();
 
     static auto lastFrame = TimeUtils::currentTimeMillis();

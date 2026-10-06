@@ -11,7 +11,6 @@
 #include "../../SDK/World/Actor/Components/MobBodyRotationComponent.h"
 #include "../../SDK/World/Actor/GameMode.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
-#include "../../SDK/World/Actor/GameMode.h"
 #include "../../SDK/World/Level/Level.h"
 #include "../../SDK/World/Level/HitResult/HitResult.h"
 #include "../../SDK/World/Level/HitResult/HitResultType.h"
@@ -23,7 +22,6 @@
 #include "../../SDK/World/Inventory/PlayerInventory.h"
 #include "../../SDK/World/Item/ItemStack.h"
 #include "../../SDK/World/Item/Item.h"
-#include "../../SDK/World/Level/Level.h"
 #include "../../Utils/Logger.h"
 #include "../../Utils/TimeUtils.h"
 
@@ -48,11 +46,10 @@ public:
     PlacementHit(LocalPlayer* player, const glm::ivec3& support, const FacingID face) {
         const int faceIndex = static_cast<int>(face);
         auto* level = player == nullptr ? nullptr : player->getLevel();
-        auto* wrapper = level == nullptr ? nullptr : level->getHitResultWrapper();
-        if (wrapper == nullptr || faceIndex < 0 || faceIndex >= static_cast<int>(faceOffsets.size()))
+        hit = level == nullptr ? nullptr : level->getHitResult();
+        if (hit == nullptr || faceIndex < 0 || faceIndex >= static_cast<int>(faceOffsets.size()))
             return;
 
-        hit = &wrapper->hitResult;
         saved = *hit;
         const auto& normal = faceOffsets[faceIndex];
         hit->startPos = player->getPosition();
@@ -119,6 +116,13 @@ bool hasPlayerClearance(const IWorld& world, const BlockPos& feet, const bool al
     return feetBlock.loaded && headBlock.loaded && !feetBlock.solid && !headBlock.solid &&
         !feetBlock.hazard && !headBlock.hazard &&
         (allowLiquid || (!feetBlock.liquid && !headBlock.liquid));
+}
+
+bool requiresSettledTakeoff(const MovementType movement) {
+    return movement == MovementType::Ascend ||
+        movement == MovementType::BreakAscend ||
+        movement == MovementType::BuildAscend ||
+        movement == MovementType::Parkour;
 }
 
 bool liquidAt(BlockSource* source, const glm::ivec3& pos) {
@@ -696,6 +700,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 feet.y >= static_cast<float>(node.pos.y) - 0.15f &&
                 feet.y <= static_cast<float>(node.pos.y) + 1.05f;
         }
+
         // A Bedrock fall can land past the destination block centre even after
         // forward input is released. Complete the fall from the supported
         // physical landing corridor so the next movement takes control; never
@@ -708,6 +713,25 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             reached = validSupportedFallLanding(hasSafeSupport(world, playerFeetBlock),
                 feet.y - static_cast<float>(node.pos.y), landing.progress,
                 landing.lateralDistance);
+        }
+
+        // A landing is not a usable jump runway on its first grounded frame.
+        // Forward momentum from even a one-block descent can carry the player
+        // off the far edge before the following ascent emits its jump pulse.
+        // Apply this after the relaxed fall-landing rule so that rule cannot
+        // bypass the exact, settled takeoff requirement.
+        if (reached && player->isOnGround() && index + 1 < path.size() &&
+            (node.movement == MovementType::Descend ||
+                node.movement == MovementType::BreakDescend ||
+                node.movement == MovementType::Fall) &&
+            requiresSettledTakeoff(path[index + 1].movement)) {
+            const float offsetX = feet.x - (static_cast<float>(node.pos.x) + 0.5f);
+            const float offsetZ = feet.z - (static_cast<float>(node.pos.z) + 0.5f);
+            const float horizontalSpeed = glm::length(
+                glm::vec2{measuredMotion.x, measuredMotion.z});
+            reached = playerFeetBlock == node.pos &&
+                bedrock_physics::settledForJumpTransition(
+                    offsetX, offsetZ, horizontalSpeed);
         }
 
         // A sequence of drops is one continuous physical movement. Bedrock
@@ -875,6 +899,13 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     }
 
     const auto& node = path[index];
+
+    const bool settlingDropBeforeJump = player->isOnGround() &&
+        index + 1 < path.size() && playerFeetBlock == node.pos &&
+        (node.movement == MovementType::Descend ||
+            node.movement == MovementType::BreakDescend ||
+            node.movement == MovementType::Fall) &&
+        requiresSettledTakeoff(path[index + 1].movement);
 
     const bool isAscending = node.movement == MovementType::Ascend ||
         node.movement == MovementType::BreakAscend ||
@@ -1350,8 +1381,9 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             const bool speedReady = bedrock_physics::parkourSprintReady(
                 parkourDistance, parkourAscend, options.sprint,
                 parkourSprintTicks, parkourAlongSpeed);
-            if (!parkourJumpIssued && player->isOnGround() && needsRunway &&
-                !speedReady && parkourAlong >= 0.25f)
+            if (bedrock_physics::shouldEnterParkourReposition(parkourDistance,
+                parkourRunwayPrepared, parkourJumpIssued, player->isOnGround(),
+                needsRunway, speedReady, parkourAlong))
                 parkourRepositioning = true;
             if (parkourRepositioning) {
                 // Reset on the supported source block before another run-up.
@@ -1368,6 +1400,8 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
                 if (glm::length(runwayError) <= 0.14f && lateral <= 0.20f &&
                     std::abs(parkourAlongSpeed) < 0.065f) {
                     parkourRepositioning = false;
+                    if (parkourDistance == 3)
+                        parkourRunwayPrepared = true;
                     parkourSprintTicks = 0;
                 }
                 parkourReady = false;
@@ -1581,7 +1615,6 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
         !requestParkourJump && nextParkourAlong >= bedrock_physics::safeTakeoffEdge - 0.08f;
     const bool parkourApproachBrake = parkourApproachRelease &&
         parkourAlong >= bedrock_physics::safeTakeoffEdge - 0.14f;
-
     // Predict the landing from the SDK's measured velocity using Bedrock's
     // gravity, drag, and air acceleration. Releasing W handles a mild projected
     // overshoot; reverse air input is reserved for a clearly missed landing.
@@ -1598,11 +1631,20 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // Coast only when existing momentum can already reach the useful landing
     // area. This avoids rapidly alternating W as the forward-input forecast
     // crosses the target from one tick to the next.
-    const bool parkourAirRelease = isParkour && parkourJumpIssued && !player->isOnGround() &&
-        parkourProgress > 0.35f && predictedLandingWithForward >= parkourLength - 0.05f &&
-        predictedLandingCoasting >= parkourLength - 0.20f;
+    const bool parkourAirReleaseCandidate = isParkour && parkourJumpIssued &&
+        !player->isOnGround() && bedrock_physics::shouldBeginParkourAirControl(
+            parkourDistance, parkourProgress, parkourLength,
+            predictedLandingWithForward, predictedLandingCoasting);
+    const bool twoBlockGap = parkourDistance == 3;
+    if (twoBlockGap && parkourAirReleaseCandidate)
+        parkourAirControlActive = true;
+    // Only the two-gap jump uses latched landing control. The longer three-gap
+    // jump needs its established forward-air profile to reach the platform.
+    const bool parkourAirRelease = isParkour && parkourJumpIssued &&
+        !player->isOnGround() &&
+        (twoBlockGap ? parkourAirControlActive : parkourAirReleaseCandidate);
     const bool parkourAirBrake = parkourAirRelease &&
-        predictedLandingCoasting >= parkourLength + 0.25f;
+        predictedLandingCoasting >= parkourLength + (twoBlockGap ? 0.15f : 0.25f);
 
     float cautiousScale = parkourRepositioning ? 0.35f : 1.f;
     if (!isParkour) {
@@ -1612,7 +1654,7 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
             cautiousScale = 0.82f;
     }
     const float pathMovementScale = cautiousScale * humanApproachScale * ascendApproachScale;
-    const float forwardAmount = parkourAirBrake ? -0.24f :
+    const float forwardAmount = parkourAirBrake ? (twoBlockGap ? -1.0f : -0.24f) :
         (parkourAirRelease ? 0.f : (parkourApproachBrake ? -0.16f :
         (parkourApproachRelease ? 0.f : requestedForward * pathMovementScale)));
     // Keep lateral correction active while braking so an imperfect launch is
@@ -1627,6 +1669,21 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     }
     if (fallControlActive) {
         localMovement = {glm::dot(right, fallWorldInput), glm::dot(forward, fallWorldInput)};
+    }
+    if (settlingDropBeforeJump) {
+        const glm::vec2 center{static_cast<float>(node.pos.x) + 0.5f,
+            static_cast<float>(node.pos.z) + 0.5f};
+        const glm::vec2 error = center - glm::vec2{feet.x, feet.z};
+        const float centerDistance = glm::length(error);
+        glm::vec2 worldInput{};
+        if (centerDistance > bedrock_physics::jumpTransitionCenteredAxisTolerance) {
+            const glm::vec2 towardCenter = error / centerDistance;
+            const float velocityTowardCenter = glm::dot(
+                glm::vec2{measuredMotion.x, measuredMotion.z}, towardCenter);
+            worldInput = towardCenter * bedrock_physics::jumpTransitionCenterInput(
+                centerDistance, velocityTowardCenter);
+        }
+        localMovement = {glm::dot(right, worldInput), glm::dot(forward, worldInput)};
     }
     if (node.movement == MovementType::WaterDrop && !inWaterBlocks) {
         // Regulate both world axes throughout the fall, including overshoot.
@@ -1715,7 +1772,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
     // jumpFromGround or write velocity: Bedrock owns the jump and its packet
     // prediction, which keeps the result valid for BDS movement checks.
     const bool groundedAtLaunch = player->isOnGround();
-    const bool holdJump = (shouldJump && groundedAtLaunch) || shouldSwimUp;
+    const bool pendingAscendLaunch = isAscending &&
+        bedrock_physics::holdJumpUntilAirborne(ascendJumpIssued,
+            ascendWasAirborne, groundedAtLaunch, ascendLaunchTicks);
+    const bool pendingParkourLaunch = isParkour &&
+        bedrock_physics::holdJumpUntilAirborne(parkourJumpIssued,
+            parkourWasAirborne, groundedAtLaunch, parkourLaunchTicks);
+    const bool holdJump = shouldSwimUp || (groundedAtLaunch &&
+        (shouldJump || pendingAscendLaunch || pendingParkourLaunch));
     // Latch the requested launch before the native movement tick consumes it.
     if (holdJump && isAscending && groundedAtLaunch) {
         ascendJumpIssued = true;
@@ -1743,8 +1807,14 @@ ExecutionStatus PathExecutor::tick(LocalPlayer* player, const ExecutionOptions& 
 
     if (const auto input = player->tryGet<MoveInputComponent>()) {
         // Keep swimming buoyant; precision ground steering must not cause a dive.
+        // Do not sneak while a jump waits for the native 20 Hz movement tick.
+        // Sneak is consumed together with jump and suppresses the horizontal
+        // takeoff velocity that is required to clear even a one-block gap.
+        // Space remains latched until the native simulation reports airborne.
         const bool shouldSneak = isBridge || cautiousDropSneak ||
-            ((precisionSneak || parkourRepositioning) && !inWaterBlocks);
+            settlingDropBeforeJump ||
+            ((precisionSneak || (parkourRepositioning && parkourDistance != 3)) &&
+                !inWaterBlocks);
         const bool sneakWasDown = input->rawInputState.sneakInputCurrentlyDown;
         input->sneaking = shouldSneak;
         input->wantDown = false;
@@ -2090,6 +2160,8 @@ void PathExecutor::resetParkourState() {
     parkourJumpIssued = false;
     parkourWasAirborne = false;
     parkourRepositioning = false;
+    parkourRunwayPrepared = false;
+    parkourAirControlActive = false;
     parkourSprintTicks = 0;
     parkourLaunchTicks = 0;
 }

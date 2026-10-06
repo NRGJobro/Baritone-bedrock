@@ -10,6 +10,7 @@ public:
     void enable();
     void disable();
     void setEnabled(bool enabled);
+    [[nodiscard]] bool isValid() const { return valid; }
 
     void* target = nullptr;
     void* callback = nullptr;

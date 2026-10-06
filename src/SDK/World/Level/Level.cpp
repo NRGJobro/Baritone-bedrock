@@ -1,5 +1,5 @@
 #include "Level.h"
 
-HitResultWrapper* Level::getHitResultWrapper() {
-    return hat::member_at<HitResultWrapper*>(this, 0x1E8);
+HitResult* Level::getHitResult() {
+    return hat::member_at<HitResult*>(this, 0x1E8);
 }

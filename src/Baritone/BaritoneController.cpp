@@ -433,11 +433,9 @@ void BaritoneController::beginCalculation(const BlockPos& start) {
         return;
     }
     activeOptions = routeOptions(options, routeStage);
-    // The executor keeps the real camera authoritative. Distances of three or
-    // four blocks require forward sprint alignment, which cannot be guaranteed
-    // when the player is looking elsewhere. Keep the camera-independent,
-    // vanilla one-gap jump and route around longer gaps instead of walking off
-    // while waiting for sprint readiness.
+    // Keep the user's configured parkour range within the executor's supported
+    // bounds. Longer jumps are aligned and accelerated by the runway controller
+    // while movement remains transformed relative to the real camera.
     activeOptions.maxParkourDistance = cameraIndependentParkourDistance(
         activeOptions.maxParkourDistance);
     calculationStart = start;

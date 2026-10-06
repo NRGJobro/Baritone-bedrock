@@ -12,10 +12,15 @@
 
 DWORD WINAPI start(LPVOID module) {
     Utils::createFolder(Utils::getClientFolder());
-    Logger::initializeLogger();
     Logger::clearLogs();
+    Logger::initializeLogger();
 
-    MH_Initialize();
+    const auto minHookStatus = MH_Initialize();
+    if (minHookStatus != MH_OK && minHookStatus != MH_ERROR_ALREADY_INITIALIZED) {
+        logF("Limiter startup aborted: MinHook initialization failed ({})",
+            magic_enum::enum_name(minHookStatus));
+        FreeLibraryAndExitThread(static_cast<HMODULE>(module), 1);
+    }
     SigInit::addSigs();
     sigMgr.scanAll();
 

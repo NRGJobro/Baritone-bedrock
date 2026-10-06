@@ -13,8 +13,15 @@ public:
     static void clearLogs();
 
     template <typename... Args>
-    static void log(const std::string& text, Args... args) {
-        const std::string formatted = fmt::vformat(text, fmt::make_format_args(args...));
-        logger->info(formatted);
+    static void log(const std::string& text, Args... args) noexcept {
+        try {
+            const auto activeLogger = logger;
+            if (activeLogger == nullptr)
+                return;
+            const std::string formatted = fmt::vformat(text, fmt::make_format_args(args...));
+            activeLogger->info(formatted);
+        } catch (...) {
+            // Diagnostics must never unwind through a Minecraft hook.
+        }
     }
 };

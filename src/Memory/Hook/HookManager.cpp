@@ -74,12 +74,8 @@ void HookManager::initializeHooks() {
     shuttingDown.store(false, std::memory_order_release);
     activeCallbacks.store(0, std::memory_order_release);
 
-    std::vector<std::thread> threads;
-
-    threads.emplace_back(&ClientHooks::init);
-    threads.emplace_back(&RenderHooks::init);
-
-    for (auto& t : threads) {
-        t.join();
-    }
+    // MinHook mutates shared process-wide state. Install in a deterministic
+    // order instead of racing its internal allocator from two startup threads.
+    ClientHooks::init();
+    RenderHooks::init();
 }
