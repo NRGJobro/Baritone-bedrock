@@ -1,23 +1,20 @@
 #pragma once
 
-#include "../../Client/SubClientId.h"
-#include "../Compressibility.h"
-#include "../NetworkPeer.h"
 #include "MinecraftPacketIds.h"
-#include "IPacketHandlerDispatcher.h"
-#include "PacketPriority.h"
+
+class IPacketHandlerDispatcher;
 
 class Packet {
     void** vtable;
 
 public:
-    PacketPriority priority;
-    NetworkPeer::Reliability reliability;
-    SubClientId senderSubId;
+    std::int32_t priority;
+    std::int32_t reliability;
+    std::uint8_t senderSubId;
     bool isHandled;
-    NetworkPeer::PacketRecvTimepoint receiveTimepoint;
+    std::chrono::steady_clock::time_point receiveTimepoint;
     IPacketHandlerDispatcher* handler;
-    Compressibility compressible;
+    std::int32_t compressible;
 
     MinecraftPacketIds getID();
 };
