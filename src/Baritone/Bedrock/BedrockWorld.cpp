@@ -1,5 +1,8 @@
 #include "BedrockWorld.h"
 
+#include "../../SDK/World/Block/Block.h"
+#include "../../SDK/World/Block/BlockLegacy.h"
+#include "../../SDK/World/Block/Material/Material.h"
 #include "../../SDK/World/Block/Material/MaterialType.h"
 #include "../../SDK/World/BlockSource.h"
 
