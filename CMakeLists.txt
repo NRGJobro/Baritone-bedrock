@@ -16,6 +16,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 option(LIMITER_BUILD_TESTS "Build pathfinder regression tests" OFF)
 option(LIMITER_CORE_TESTS_ONLY "Build core tests without client dependencies" OFF)
 option(LIMITER_LINK_MAP "Generate a linker map for crash-address analysis" OFF)
+option(LIMITER_UNITY_BUILD "Batch source files into unity translation units" ON)
 
 if(LIMITER_BUILD_TESTS OR LIMITER_CORE_TESTS_ONLY)
     enable_testing()
@@ -106,7 +107,7 @@ target_compile_definitions(Limiter PRIVATE NOMINMAX _USE_STD_VECTOR_ALGORITHMS=0
 target_link_libraries(Limiter PRIVATE minhook libhat EnTT::EnTT magic_enum spdlog::spdlog glm)
 target_precompile_headers(Limiter PRIVATE PCH.h)
 set_target_properties(Limiter PROPERTIES
-    UNITY_BUILD ON
+    UNITY_BUILD ${LIMITER_UNITY_BUILD}
     UNITY_BUILD_BATCH_SIZE 8
 )
 set_source_files_properties(

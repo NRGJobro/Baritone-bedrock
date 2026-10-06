@@ -6,15 +6,13 @@ class StaticVector {
     size_t size{};
 
 public:
-    StaticVector() {
-        memset(this, 0, sizeof(StaticVector));
-    }
+    StaticVector() = default;
 
     void push_back(const T& element) {
         if (size == Size)
             return;
 
-        data[size] = std::move(element);
+        data[size] = element;
         size++;
     }
 
@@ -23,7 +21,7 @@ public:
     }
 
     T* operator[](const size_t index) {
-        if (index >= Size)
+        if (index >= size)
             return nullptr;
 
         return &data[index];

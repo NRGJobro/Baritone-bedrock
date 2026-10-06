@@ -5,7 +5,7 @@
 
 struct RenderMaterialGroup;
 
-mce::MaterialPtr* mce::MaterialPtr::createMaterial(const HashedString& name) {
+std::shared_ptr<mce::MaterialPtr> mce::MaterialPtr::createMaterial(const HashedString& name) {
     static RenderMaterialGroup* materialCreator = nullptr;
 
     if (materialCreator == nullptr)
@@ -15,5 +15,5 @@ mce::MaterialPtr* mce::MaterialPtr::createMaterial(const HashedString& name) {
         return nullptr;
 
     return Utils::CallVFunc<1, std::shared_ptr<MaterialPtr>, const HashedString&>(
-        materialCreator, name).get();
+        materialCreator, name);
 }

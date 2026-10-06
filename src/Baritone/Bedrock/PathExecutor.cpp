@@ -9,6 +9,7 @@
 #include "../../SDK/Client/Input/MoveInputComponent.h"
 #include "../../SDK/World/Actor/Components/ActorHeadRotationComponent.h"
 #include "../../SDK/World/Actor/Components/MobBodyRotationComponent.h"
+#include "../../SDK/World/Actor/GameMode.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../SDK/World/Block/Block.h"
 #include "../../SDK/World/Block/BlockLegacy.h"
@@ -18,6 +19,7 @@
 #include "../../SDK/World/Inventory/PlayerInventory.h"
 #include "../../SDK/World/Item/ItemStack.h"
 #include "../../SDK/World/Item/Item.h"
+#include "../../SDK/World/Level/Level.h"
 #include "../../Utils/Logger.h"
 #include "../../Utils/TimeUtils.h"
 

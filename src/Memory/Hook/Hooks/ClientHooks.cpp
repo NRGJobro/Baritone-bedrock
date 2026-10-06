@@ -14,8 +14,6 @@
 #include "../../../SDK/Network/LoopbackPacketSender.h"
 #include "../../../SDK/Network/Packet/Packet.h"
 #include "../../../SDK/Network/Packet/Packets/PlayerAuthInputPacket.h"
-#include "../../../SDK/Client/Input/MoveInputComponent.h"
-#include "../../../SDK/World/Actor/Actor.h"
 #include "../../../SDK/World/Actor/LocalPlayer.h"
 #include "../../../SDK/World/Level/HitResult/FacingID.h"
 #include "../../../Utils/Logger.h"
@@ -264,69 +262,6 @@ bool ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens(void* lev
         MC::getLocalPlayer() != nullptr);
 }
 
-void Actor_baseTick(Actor* actor) {
-    HookManager::CallbackGuard callbackGuard;
-    static auto original = GET_HOOK(&Actor_baseTick);
-    if (!callbackGuard.allowClientCode()) {
-        if (original != nullptr)
-            original(actor);
-        return;
-    }
-    const bool localPlayerTick = actor != nullptr && actor == MC::getLocalPlayer();
-    static std::uint64_t movementTraceTick = 0;
-    const bool traceMovement = localPlayerTick && (++movementTraceTick % 20 == 0);
-    const auto traceInput = [traceMovement](const char* stage, Actor* currentActor) {
-        if (!traceMovement || currentActor == nullptr)
-            return;
-        auto* input = currentActor->tryGet<MoveInputComponent>();
-        const auto position = currentActor->getPosition();
-        if (input == nullptr) {
-            logF("[MovementTrace] {} actor={:#x} input=null pos=({:.3f},{:.3f},{:.3f})",
-                stage, reinterpret_cast<std::uintptr_t>(currentActor), position.x, position.y, position.z);
-            return;
-        }
-        logF("[MovementTrace] {} actor={:#x} input={:#x} move=({:.3f},{:.3f}) analog=({:.3f},{:.3f}) "
-             "dirs={}{}{}{} locked={} cameraRel={} rotByMove={} pos=({:.3f},{:.3f},{:.3f})",
-            stage, reinterpret_cast<std::uintptr_t>(currentActor), reinterpret_cast<std::uintptr_t>(input),
-            input->move.x, input->move.y,
-            input->rawInputState.analogMoveVector.x, input->rawInputState.analogMoveVector.y,
-            input->rawInputState.up ? 'U' : '-', input->rawInputState.down ? 'D' : '-',
-            input->rawInputState.left ? 'L' : '-', input->rawInputState.right ? 'R' : '-',
-            input->moveInputStateLocked, input->isCameraRelativeMovementEnabled,
-            input->isRotControlledByMoveDirection, position.x, position.y, position.z);
-    };
-
-    // Phase's Pathfinder prepares its command during ActorBaseTickEvent before
-    // the original ActorBaseTick. This is late enough that Minecraft has
-    // populated MoveInputComponent, but early enough for vanilla acceleration,
-    // collision, and packet prediction to consume the synthetic W/A/S/D state.
-    if (localPlayerTick)
-        g_modMgr.onTick();
-    traceInput("command", actor);
-
-    if (original != nullptr)
-        original(actor);
-    traceInput("native", actor);
-
-    if (localPlayerTick)
-        g_modMgr.onPostTick();
-    traceInput("reapply", actor);
-}
-
-void ensureActorBaseTickHook(LocalPlayer* player) {
-    static std::atomic_bool installed{false};
-    if (player == nullptr || installed.load(std::memory_order_acquire))
-        return;
-
-    const auto vtable = *reinterpret_cast<uintptr_t**>(player);
-    if (vtable == nullptr || vtable[25] == 0)
-        return;
-
-    HookManager::addHook(vtable[25], &Actor_baseTick);
-    installed.store(true, std::memory_order_release);
-    logF("Installed ActorBaseTick movement hook at {:#x}", vtable[25]);
-}
-
 void Keyboard_feed(const uint8_t keyCode, const bool down) {
     if (g_Client.keys[keyCode] == down)
         return;
@@ -428,8 +363,10 @@ bool ClientInstance_update(ClientInstance* instance, const uint32_t updateArgume
     // touching a LocalPlayer/BlockSource while the native update is replacing
     // it during a disconnect or dimension transition.
     handleWorldIdentityChange(instance);
-    if (instance != nullptr)
-        ensureActorBaseTickHook(instance->getLocalPlayer());
+    if (instance != nullptr && instance->getLocalPlayer() != nullptr) {
+        g_modMgr.onTick();
+        g_modMgr.onPostTick();
+    }
     return result;
 }
 
@@ -454,8 +391,6 @@ void ClientHooks::init() {
     ADD_HOOK("GammaHook::gammaSig", BaseOptions_getGamma);
     ADD_HOOK("WorldNotShowingMenusHook::worldMenusSig",
         ExternalDataMultiPlayerLevel_isInWorldAndNotShowingAnyMenuScreens);
-
-    ensureActorBaseTickHook(MC::getLocalPlayer());
 
     if (auto* instance = MC::getClientInstance(); instance != nullptr) {
         if (auto* packetSender = instance->getPacketSender(); packetSender != nullptr) {

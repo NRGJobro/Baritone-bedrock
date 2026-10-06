@@ -3,8 +3,8 @@
 #include "../Sig/SignatureManager.h"
 #include "Hook.h"
 
-#define ADD_HOOK(name, func) HookManager::addHook(GET_SIG(name), func)
-#define ADD_HOOK2(func, addr) HookManager::addHook(addr, func)
+#define ADD_HOOK(name, func) HookManager::addHook(GET_SIG(name), reinterpret_cast<void*>(func))
+#define ADD_HOOK2(func, addr) HookManager::addHook(addr, reinterpret_cast<void*>(func))
 #define GET_HOOK(func) HookManager::getReturn<func>()
 
 class HookManager {
@@ -36,7 +36,7 @@ public:
 
     template<auto callback>
     static auto getReturn() {
-        const auto hook = getHook(*callback);
+        const auto hook = getHook(reinterpret_cast<void*>(callback));
         return hook == nullptr ? nullptr : reinterpret_cast<decltype(callback)>(hook->original);
     }
 

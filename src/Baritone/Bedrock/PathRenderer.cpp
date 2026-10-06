@@ -4,6 +4,7 @@
 #include "../Core/AdvancedGoals.h"
 #include "BedrockWorld.h"
 #include "../../SDK/MC.h"
+#include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../Utils/DrawUtils.h"
 #include "../../Utils/LimiterTess.h"
 #include "../../Utils/TimeUtils.h"

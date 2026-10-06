@@ -7,6 +7,8 @@
 #include "../../Baritone/Core/AdvancedGoals.h"
 #include "../../Baritone/Core/Movement.h"
 #include "../../SDK/MC.h"
+#include "../../SDK/Client/GUI/GuiData.h"
+#include "../../SDK/World/Actor/LocalPlayer.h"
 
 #include <charconv>
 #include <cmath>

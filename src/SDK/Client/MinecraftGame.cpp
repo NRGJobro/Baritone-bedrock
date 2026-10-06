@@ -17,23 +17,12 @@ FontRepository* MinecraftGame::getFontRepository() {
 }
 
 Font* MinecraftGame::getFont(const Fonts font) {
-    static bool hasCachedAllFonts = false;
-    static std::unordered_map<Fonts, Font*> cachedFonts;
     const auto repo = this->getFontRepository();
     if (repo == nullptr || repo->loadedFonts.empty())
         return nullptr;
 
-    if (!hasCachedAllFonts) {
-        magic_enum::enum_for_each<Fonts>([&](auto loopedFont) {
-            Fonts currentFont = loopedFont;
-            const auto name = std::string(magic_enum::enum_name(currentFont));
-            const auto identifier = repo->fontNameToIdentifier.find(name);
-            const auto index = identifier == repo->fontNameToIdentifier.end() ? 0 : identifier->second;
-            cachedFonts.emplace(currentFont,
-                repo->loadedFonts.at(std::min<std::size_t>(index, repo->loadedFonts.size() - 1)).get());
-        });
-        hasCachedAllFonts = true;
-    }
-
-    return cachedFonts[font];
+    const auto name = std::string(magic_enum::enum_name(font));
+    const auto identifier = repo->fontNameToIdentifier.find(name);
+    const auto index = identifier == repo->fontNameToIdentifier.end() ? 0 : identifier->second;
+    return repo->loadedFonts[std::min<std::size_t>(index, repo->loadedFonts.size() - 1)].get();
 }

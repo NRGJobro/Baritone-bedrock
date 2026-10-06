@@ -15,8 +15,8 @@
 
 constexpr float RAD_DEG = 3.1415927f / 180.f;
 
-static mce::MaterialPtr* uiFillColor;
-static mce::MaterialPtr* selectionOverlay;
+static std::shared_ptr<mce::MaterialPtr> uiFillColor;
+static std::shared_ptr<mce::MaterialPtr> selectionOverlay;
 
 static MinecraftUIRenderContext* renderCtx;
 static ScreenContext* screenContext;
@@ -52,7 +52,7 @@ void DrawUtils::reset() {
 }
 
 mce::MaterialPtr* DrawUtils::getUIFillColor() {
-    return uiFillColor;
+    return uiFillColor.get();
 }
 
 ScreenContext* DrawUtils::getScreenContext() {
@@ -60,7 +60,7 @@ ScreenContext* DrawUtils::getScreenContext() {
 }
 
 mce::MaterialPtr* DrawUtils::getSelectionOverlay() {
-    return selectionOverlay;
+    return selectionOverlay.get();
 }
 
 Tessellator* DrawUtils::getTessellator() {

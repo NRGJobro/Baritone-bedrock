@@ -7,5 +7,7 @@ LevelRendererPlayer* LevelRenderer::getLevelRendererPlayer() {
 }
 
 const glm::vec3& LevelRenderer::getCameraPos() {
-    return this->getLevelRendererPlayer()->getCameraPos();
+    static const glm::vec3 fallback{};
+    auto* playerRenderer = this->getLevelRendererPlayer();
+    return playerRenderer == nullptr ? fallback : playerRenderer->getCameraPos();
 }

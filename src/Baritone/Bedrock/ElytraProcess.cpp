@@ -6,14 +6,13 @@
 #include "../../Utils/LimiterTess.h"
 #include "../../SDK/Network/Packet/Packets/PlayerAuthInputPacket.h"
 #include "../../SDK/World/Actor/Components/StateVectorComponent.h"
+#include "../../SDK/World/Actor/GameMode.h"
+#include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../SDK/World/Inventory/Inventory.h"
 #include "../../SDK/World/Inventory/PlayerInventory.h"
 #include "../../SDK/World/Item/Item.h"
 #include "../../SDK/World/Item/ItemStack.h"
 #include "../../SDK/Client/MCE/Color.h"
-#include "../../SDK/World/Actor/LocalPlayer.h"
-#include "../../SDK/World/Item/Item.h"
-#include "../../SDK/World/Item/ItemStack.h"
 
 #include <algorithm>
 #include <cmath>

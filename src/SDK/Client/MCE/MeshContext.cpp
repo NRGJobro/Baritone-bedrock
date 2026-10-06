@@ -4,7 +4,14 @@
 #include "../GUI/GuiData.h"
 
 void mce::MeshContext::setClippingRectangle(const float x, const float y, const float width, const float height) {
-    const auto& clientUIScreenSize = MC::getGuiData()->screenSizeData.clientUIScreenSize;
+    const auto* guiData = MC::getGuiData();
+    if (guiData == nullptr)
+        return;
+
+    const auto& clientUIScreenSize = guiData->screenSizeData.clientUIScreenSize;
+    if (!std::isfinite(clientUIScreenSize.x) || !std::isfinite(clientUIScreenSize.y) ||
+        clientUIScreenSize.x <= 0.f || clientUIScreenSize.y <= 0.f)
+        return;
 
     const float normWidth = 1.f / clientUIScreenSize.x;
     const float normHeight = 1.f / clientUIScreenSize.y;
