@@ -2,6 +2,8 @@
 
 #include "../../SDK/MC.h"
 #include "../../SDK/Network/Packet/Packets/PlayerAuthInputPacket.h"
+#include "../../SDK/World/Actor/Components/ActorHeadRotationComponent.h"
+#include "../../SDK/World/Actor/Components/MobBodyRotationComponent.h"
 #include "../../SDK/World/Actor/GameMode.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../SDK/World/BlockSource.h"
