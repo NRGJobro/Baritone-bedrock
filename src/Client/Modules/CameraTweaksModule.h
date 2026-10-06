@@ -2,7 +2,7 @@
 
 #include "Module.h"
 
-#include "../../SDK/Client/Camera/CameraComponent.h"
+namespace MinecraftCamera { struct CameraComponent; }
 
 class CameraTweaksModule final : public Module {
     float distance = 4.f;
