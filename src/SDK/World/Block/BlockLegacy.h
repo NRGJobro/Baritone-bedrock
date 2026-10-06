@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Material/Material.h"
+class Material;
 
 class BlockSource;
 class Block;
