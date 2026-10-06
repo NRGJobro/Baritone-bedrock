@@ -35,6 +35,14 @@ void DrawUtils::update(ScreenContext* ctx) {
         selectionOverlay = mce::MaterialPtr::createMaterial("selection_overlay");
 }
 
+void DrawUtils::reset() {
+    renderCtx = nullptr;
+    screenContext = nullptr;
+    tessellator = nullptr;
+    uiFillColor = nullptr;
+    selectionOverlay = nullptr;
+}
+
 mce::MaterialPtr* DrawUtils::getUIFillColor() {
     return uiFillColor;
 }
