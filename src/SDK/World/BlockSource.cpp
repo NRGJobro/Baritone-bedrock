@@ -1,5 +1,7 @@
 #include "BlockSource.h"
 
+#include "Block/Block.h"
+
 #include "../../Utils/Utils.h"
 
 Block* BlockSource::getBlock(int x, int y, int z) {
