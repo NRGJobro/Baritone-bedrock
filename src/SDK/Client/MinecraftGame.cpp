@@ -1,5 +1,9 @@
 #include "MinecraftGame.h"
 
+#include "ClientInstance.h"
+#include "Font/Font.h"
+#include "Font/FontRepository.h"
+#include "Font/Fonts.h"
 #include "../../Utils/Utils.h"
 
 ClientInstance* MinecraftGame::getClientInstance() {
