@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Client/MCE/Color.h"
 #include "../Client/MCE/Mesh.h"
 #include "../Client/MCE/MeshData.h"
 

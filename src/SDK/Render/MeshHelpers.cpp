@@ -1,4 +1,5 @@
 #include "MeshHelpers.h"
+#include "Tessellator.h"
 
 void MeshHelpers::renderMeshImmediately(ScreenContext* screenContext, Tessellator* tessellator, mce::MaterialPtr* material) {
     if (tessellator->isTessellating()) {
