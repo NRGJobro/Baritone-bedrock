@@ -2,7 +2,11 @@
 
 #include "DrawUtils.h"
 #include "../SDK/MC.h"
+#include "../SDK/Client/MCE/Color.h"
+#include "../SDK/Render/Level/LevelRenderer.h"
 #include "../SDK/Render/MeshHelpers.h"
+#include "../SDK/Render/ScreenContext.h"
+#include "../SDK/Render/Tessellator.h"
 
 #include <algorithm>
 #include <climits>
