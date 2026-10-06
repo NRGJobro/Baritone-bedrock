@@ -27,6 +27,7 @@ class ExploreProcess {
 public:
     void start(const BlockPos& origin, int radiusChunks = 0);
     void cancel(BaritoneController& controller);
+    void resetForWorldChange();
     void tick(BaritoneController& controller);
 
     [[nodiscard]] bool isActive() const;
