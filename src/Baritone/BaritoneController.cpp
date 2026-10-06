@@ -3,6 +3,8 @@
 #include "Bedrock/BedrockWorld.h"
 #include "Bedrock/PathRenderer.h"
 #include "../SDK/MC.h"
+#include "../SDK/Client/GUI/GuiData.h"
+#include "../SDK/World/Actor/LocalPlayer.h"
 
 #include <algorithm>
 #include <unordered_set>
