@@ -1,11 +1,9 @@
 #pragma once
 
-#include "../dragon/ResolvedVertexBufferResource.h"
-#include "Buffer.h"
-#include "CheckedResourceService.h"
-#include "ClientResourcePointer.h"
-
 namespace mce {
-    struct BufferResourceService : CheckedResourceService<std::variant<std::monostate, Buffer,
-        ClientResourcePointer<dragon::mesh::ResolvedVertexBufferResource>>> { };
+    // Limiter only stores/copies Minecraft's shared/weak references to this
+    // service; it never reads service fields. Keeping it opaque avoids pulling
+    // the entire unused RenderContext/resource-tracker SDK graph into the
+    // client while preserving pointer/control-block ABI.
+    struct BufferResourceService {};
 }
