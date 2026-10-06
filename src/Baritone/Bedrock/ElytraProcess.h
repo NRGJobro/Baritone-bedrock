@@ -34,6 +34,7 @@ class ElytraProcess {
 public:
     void start(const BlockPos& target);
     void cancel(LocalPlayer* player = nullptr);
+    void resetForWorldChange();
     void suspend(LocalPlayer* player = nullptr);
     void tick(LocalPlayer* player);
     void render() const;
