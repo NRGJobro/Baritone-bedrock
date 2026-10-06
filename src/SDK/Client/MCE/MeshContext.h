@@ -1,8 +1,10 @@
 #pragma once
 
-#include "../../Render/ShaderColor.h"
-#include "Camera.h"
-#include "RenderContext.h"
+class ShaderColor;
+namespace mce {
+    class Camera;
+    class RenderContext;
+}
 
 namespace mce {
     class MeshContext {
