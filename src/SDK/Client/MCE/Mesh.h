@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../../../Utils/StaticVector.h"
-#include "BufferResourceService.h"
 #include "IndexBufferContainer.h"
 #include "MaterialPtr.h"
 #include "MeshContext.h"
@@ -9,6 +8,8 @@
 #include "TexturePtr.h"
 
 namespace mce {
+    struct BufferResourceService;
+
     class Mesh : public IndexBufferContainer {
     public:
         std::variant<std::monostate, uint64_t, glm::vec3> cacheKey;
