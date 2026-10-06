@@ -28,6 +28,20 @@ void DrawUtils::updateMCUIRC(MinecraftUIRenderContext* ctx) {
     renderCtx = ctx;
 
     update(ctx->screenContext);
+
+    // RenderMaterialGroup is not safe to touch from the LevelRenderer 3D
+    // callback during early frame/world setup. Phase/Flow initialize their
+    // shared render materials from the MinecraftUIRenderContext path instead.
+    // Keep material creation on this post-UI-render path and let 3D rendering
+    // skip a frame until these pointers are available.
+    if (screenContext == nullptr || tessellator == nullptr)
+        return;
+
+    if (uiFillColor == nullptr)
+        uiFillColor = mce::MaterialPtr::createMaterial("ui_fill_color");
+
+    if (selectionOverlay == nullptr)
+        selectionOverlay = mce::MaterialPtr::createMaterial("selection_overlay");
 }
 
 void DrawUtils::update(ScreenContext* ctx) {
@@ -35,12 +49,6 @@ void DrawUtils::update(ScreenContext* ctx) {
         return;
     screenContext = ctx;
     tessellator = ctx->getTessellator();
-
-    if (uiFillColor == nullptr)
-        uiFillColor = mce::MaterialPtr::createMaterial("ui_fill_color");
-
-    if (selectionOverlay == nullptr)
-        selectionOverlay = mce::MaterialPtr::createMaterial("selection_overlay");
 }
 
 void DrawUtils::reset() {
