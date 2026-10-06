@@ -1,6 +1,7 @@
 #include "MeshContext.h"
 
 #include "../../MC.h"
+#include "../GUI/GuiData.h"
 
 void mce::MeshContext::setClippingRectangle(const float x, const float y, const float width, const float height) {
     const auto& clientUIScreenSize = MC::getGuiData()->screenSizeData.clientUIScreenSize;
