@@ -1,7 +1,8 @@
 #pragma once
 
-#include "../Inventory/PlayerInventory.h"
 #include "Mob.h"
+
+class PlayerInventory;
 
 class Player : public Mob {
 public:
