@@ -44,7 +44,7 @@ void LimiterTess::drawLine3D(const glm::vec3& start, const glm::vec3& end, const
     tessellator->vertex(startRelative.x, startRelative.y, startRelative.z);
     tessellator->vertex(endRelative.x, endRelative.y, endRelative.z);
 
-    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, drawMaterial);
 }
 
 void LimiterTess::drawLineList3D(
@@ -64,7 +64,7 @@ void LimiterTess::drawLineList3D(
         tessellator->vertex(endRelative.x, endRelative.y, endRelative.z);
     }
 
-    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, drawMaterial);
 }
 
 void LimiterTess::drawFilledQuad3D(const std::array<glm::vec3, 4>& corners,
@@ -89,7 +89,7 @@ void LimiterTess::drawFilledQuads3D(
         }
     }
 
-    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, drawMaterial);
 }
 
 void LimiterTess::drawFilledBox3D(const glm::vec3& lower, const glm::vec3& upper,
@@ -135,5 +135,5 @@ void LimiterTess::drawBox3D(const glm::vec3& lower, const glm::vec3& upper, cons
     for (const int vertexIndex : edges)
         tessellator->vertex(vertices[vertexIndex]);
 
-    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, material(onUi));
+    MeshHelpers::renderMeshImmediately(screenContext3D, tessellator, drawMaterial);
 }
