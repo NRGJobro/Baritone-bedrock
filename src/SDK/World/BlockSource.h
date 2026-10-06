@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Block/Block.h"
+class Block;
 class BlockSource {
 public:
     Block* getBlock(int x, int y, int z);
