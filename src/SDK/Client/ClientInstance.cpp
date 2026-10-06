@@ -1,5 +1,11 @@
 #include "ClientInstance.h"
 
+#include "../Network/LoopbackPacketSender.h"
+#include "../Render/Level/LevelRenderer.h"
+#include "../World/Actor/LocalPlayer.h"
+#include "../World/BlockSource.h"
+#include "GUI/GuiData.h"
+#include "MCE/Camera.h"
 #include "../../Utils/Utils.h"
 
 MinecraftGame* ClientInstance::getMinecraftGame() {
