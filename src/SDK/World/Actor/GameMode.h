@@ -1,11 +1,10 @@
 #pragma once
 
-#include "../Block/Block.h"
-#include "../Level/HitResult/FacingID.h"
 #include <glm/glm.hpp>
 
 class Actor;
 class ItemStack;
+enum class FacingID : std::int8_t;
 enum class InputMode : std::uint32_t;
 
 // Same-version Bedrock GameMode interface.  Placement is routed through the
