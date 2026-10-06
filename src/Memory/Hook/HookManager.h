@@ -9,9 +9,26 @@
 
 class HookManager {
 public:
+    // Every real hook callback owns one of these for its entire execution.
+    // Teardown disables hook entry first, then waits until all guards drain
+    // before freeing MinHook trampolines or module state.
+    class CallbackGuard {
+    public:
+        CallbackGuard();
+        ~CallbackGuard();
+
+        CallbackGuard(const CallbackGuard&) = delete;
+        CallbackGuard& operator=(const CallbackGuard&) = delete;
+
+        [[nodiscard]] bool allowClientCode() const;
+    };
+
     static void initializeHooks();
 
     static void setHooksEnabled(bool enabled);
+    static void beginShutdown();
+    static void waitForCallbacks();
+    [[nodiscard]] static bool isShuttingDown();
 
     static Hook* getHook(void* func);
 
@@ -29,4 +46,6 @@ private:
     static inline std::unordered_map<void*, std::unique_ptr<Hook>> hooks{};
     static inline std::mutex hooksMutex{};
     static inline std::atomic_bool globallyEnabled{false};
+    static inline std::atomic_bool shuttingDown{false};
+    static inline std::atomic_uint32_t activeCallbacks{0};
 };
