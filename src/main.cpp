@@ -1,9 +1,12 @@
 #include "Client.h"
+#include "Baritone/Bedrock/BedrockBlockBreaking.h"
+#include "Client/GUI/ClickGui.h"
 #include "Client/Modules/ModuleManager.h"
 #include "Memory/Hook/HookManager.h"
 #include "Memory/Sig/SigInit.h"
 #include "Memory/Sig/SignatureManager.h"
 #include "SDK/MC.h"
+#include "Utils/DrawUtils.h"
 #include "Utils/Logger.h"
 #include "Utils/Utils.h"
 
@@ -49,6 +52,7 @@ DWORD WINAPI start(LPVOID module) {
         SetWindowTextA(MC::getWindowHandle(), "Limiter - Minecraft");
 
     g_modMgr.init();
+    g_Client.modulesReady.store(true, std::memory_order_release);
     HookManager::initializeHooks();
     HookManager::setHooksEnabled(true);
     logF("Limiter initialized");
@@ -56,13 +60,28 @@ DWORD WINAPI start(LPVOID module) {
     while (g_Client.running)
         Sleep(10);
 
-    g_modMgr.shutdown();
-    HookManager::setHooksEnabled(false);
-    HookManager::destroy();
-    MH_Uninitialize();
+    // Stop custom hook entry first. A callback may already be running on a
+    // Minecraft render/game thread, so keep modules, SDK objects and MinHook
+    // trampolines alive until every in-flight callback has returned.
+    g_Client.shuttingDown.store(true, std::memory_order_release);
+    g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
+    g_Client.hudScreenActive.store(false, std::memory_order_release);
+    HookManager::beginShutdown();
+    HookManager::waitForCallbacks();
+
+    ClickGui::shutdown();
+    if (g_Client.modulesReady.exchange(false, std::memory_order_acq_rel))
+        g_modMgr.shutdown();
+    baritone::bedrock_block_breaking::reset();
+    DrawUtils::reset();
 
     if (IsWindow(MC::getWindowHandle()))
         SetWindowTextA(MC::getWindowHandle(), "Minecraft");
+
+    MC::reset();
+    HookManager::destroy();
+    MH_Uninitialize();
+
     FreeLibraryAndExitThread(static_cast<HMODULE>(module), 0);
 }
 
