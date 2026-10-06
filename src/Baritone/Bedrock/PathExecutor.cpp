@@ -1992,8 +1992,14 @@ void PathExecutor::beginVisualRotationRender(LocalPlayer* player) {
 }
 
 void PathExecutor::endVisualRotationRender(LocalPlayer* player) {
-    if (player == nullptr || !renderRotationOverrideActive)
+    if (!renderRotationOverrideActive)
         return;
+    if (player == nullptr) {
+        // A world/dimension can disappear between the before/after render
+        // callbacks. Never carry the old actor override into the next world.
+        renderRotationOverrideActive = false;
+        return;
+    }
     player->setRotation(savedActorRotation);
     if (auto* head = player->tryGet<ActorHeadRotationComponent>())
         head->rotation = savedHeadRotation;
