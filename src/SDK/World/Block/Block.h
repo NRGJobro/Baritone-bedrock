@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BlockLegacy.h"
+class BlockLegacy;
 class Block {
 public:
     BlockLegacy* getBlockLegacy();
