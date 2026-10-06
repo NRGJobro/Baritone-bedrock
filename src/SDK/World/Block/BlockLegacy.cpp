@@ -2,6 +2,8 @@
 
 #include "Material/Material.h"
 
+#include "Material/Material.h"
+
 int16_t BlockLegacy::getBlockId() {
     return hat::member_at<int16_t>(this, 0x17E);
 }
