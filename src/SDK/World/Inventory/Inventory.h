@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Item/ItemStack.h"
+class ItemStack;
 
 class Inventory {
 public:
