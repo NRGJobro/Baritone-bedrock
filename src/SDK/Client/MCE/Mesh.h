@@ -16,8 +16,8 @@ namespace mce {
         PrimitiveMode primitiveMode;
         std::weak_ptr<BufferResourceService> bufferResourceService;
         MeshData meshData;
-        ClientResourcePointer<std::variant<std::monostate, Buffer, ClientResourcePointer<dragon::mesh::ResolvedVertexBufferResource>>> vertexLayout;
-        ClientResourcePointer<std::variant<std::monostate, Buffer, ClientResourcePointer<dragon::mesh::ResolvedVertexBufferResource>>> vertexBuffer;
+        ClientResourcePointer<void> vertexLayout;
+        ClientResourcePointer<void> vertexBuffer;
         std::optional<uint32_t> vertexCount;
         VertexFormat layoutFormat;
         VertexFormat bufferFormat;
