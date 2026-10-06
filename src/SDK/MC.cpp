@@ -1,5 +1,11 @@
 #include "MC.h"
 
+#include "Client/ClientInstance.h"
+#include "Client/MinecraftGame.h"
+#include "Client/GUI/GuiData.h"
+#include "Render/Level/LevelRenderer.h"
+#include "World/Actor/LocalPlayer.h"
+#include "World/BlockSource.h"
 #include "../Memory/Sig/SignatureManager.h"
 #include "../Utils/Utils.h"
 
