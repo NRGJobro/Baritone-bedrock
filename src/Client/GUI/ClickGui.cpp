@@ -125,6 +125,44 @@ void ClickGui::maintainMouseCapture() {
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
 }
 
+void ClickGui::shutdown() {
+    g_Client.clickGuiOpened = false;
+    g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
+
+    const auto window = MC::getWindowHandle();
+    if (GetCapture() == window)
+        ReleaseCapture();
+    ClipCursor(nullptr);
+
+    // Explicitly release engine-backed mesh resources while Minecraft and the
+    // SDK are still alive. Their static destructors will then see empty meshes
+    // after FreeLibrary instead of touching stale RenderDragon resources.
+    overlayMesh.reset();
+    shellMesh.reset();
+    headerMesh.reset();
+    sidebarMesh.reset();
+    redlineMesh.reset();
+    gaugeMesh.reset();
+    cardMesh.reset();
+    cardHoverMesh.reset();
+    cardActiveMesh.reset();
+    settingsMesh.reset();
+    toggleTrackMesh.reset();
+    knobMesh.reset();
+
+    builtMeshes = false;
+    clickPending = false;
+    rightClickPending = false;
+    settingsOpen = false;
+    rotationDragging = false;
+    bridgeDragging = false;
+    closingAnimation = false;
+    openAnimation = 0.f;
+    wheelDirection = 0;
+    hoverAnimations.clear();
+    toggleAnimations.clear();
+}
+
 void ClickGui::render() {
     if (g_Client.clickGuiOpened)
         maintainMouseCapture();
