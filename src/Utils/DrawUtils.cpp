@@ -1,7 +1,14 @@
 #include "DrawUtils.h"
 
+#include "../SDK/Client/Font/Font.h"
+#include "../SDK/Client/MCE/MaterialPtr.h"
 #include "../SDK/Client/MinecraftGame.h"
 #include "../SDK/MC.h"
+#include "../SDK/Render/CaretMeasureData.h"
+#include "../SDK/Render/MinecraftUIRenderContext.h"
+#include "../SDK/Render/ScreenContext.h"
+#include "../SDK/Render/Tessellator.h"
+#include "../SDK/Render/TextMeasureData.h"
 #include "TimeUtils.h"
 #include "Utils.h"
 
