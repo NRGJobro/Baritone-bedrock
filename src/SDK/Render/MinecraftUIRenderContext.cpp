@@ -1,5 +1,10 @@
 #include "MinecraftUIRenderContext.h"
 
+#include "../Client/Font/Font.h"
+#include "../Client/MCE/Color.h"
+#include "CaretMeasureData.h"
+#include "ScreenContext.h"
+#include "TextMeasureData.h"
 #include "../../Utils/Utils.h"
 
 void MinecraftUIRenderContext::drawText(Font* font, const glm::vec4& pos, const std::string& text, const mce::Color& color, const float alpha,
