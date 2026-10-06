@@ -1,5 +1,7 @@
 #include "Inventory.h"
 
+#include "../Item/ItemStack.h"
+
 #include "../../../Utils/Utils.h"
 
 ItemStack* Inventory::getItem(const int slot) {
