@@ -29,6 +29,12 @@ void Module::toggle() {
 }
 
 void Module::setEnabled(const bool enabled) {
+    // Re-running onDisable during teardown/world transitions can touch game
+    // objects that are already being destroyed. Only fire lifecycle callbacks
+    // on a real state transition.
+    if (this->enabled == enabled)
+        return;
+
     this->enabled = enabled;
 
     if (enabled)
