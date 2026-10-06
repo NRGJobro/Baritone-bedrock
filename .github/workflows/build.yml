@@ -11,6 +11,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Audit SDK reachability
+        shell: pwsh
+        run: python tools/audit-sdk.py
       - name: Configure
         shell: pwsh
         run: cmake -S . -B out/ci -G Ninja -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DLIMITER_BUILD_TESTS=ON
