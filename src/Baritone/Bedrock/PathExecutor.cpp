@@ -7,6 +7,8 @@
 #include "MovementInput.h"
 #include "../../SDK/MC.h"
 #include "../../SDK/Client/Input/MoveInputComponent.h"
+#include "../../SDK/World/Actor/Components/ActorHeadRotationComponent.h"
+#include "../../SDK/World/Actor/Components/MobBodyRotationComponent.h"
 #include "../../SDK/World/Actor/LocalPlayer.h"
 #include "../../SDK/World/BlockSource.h"
 #include "../../SDK/World/Inventory/Inventory.h"
