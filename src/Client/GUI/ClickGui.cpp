@@ -125,6 +125,23 @@ void ClickGui::maintainMouseCapture() {
     SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
 }
 
+void ClickGui::dismissForWorldChange() {
+    g_Client.clickGuiOpened = false;
+    g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
+    settingsOpen = false;
+    rotationDragging = false;
+    bridgeDragging = false;
+    clickPending = false;
+    rightClickPending = false;
+    closingAnimation = false;
+    openAnimation = 0.f;
+
+    const auto window = MC::getWindowHandle();
+    if (GetCapture() == window)
+        ReleaseCapture();
+    ClipCursor(nullptr);
+}
+
 void ClickGui::shutdown() {
     g_Client.clickGuiOpened = false;
     g_Client.gameplayInputAllowed.store(false, std::memory_order_release);
