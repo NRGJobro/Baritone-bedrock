@@ -35,7 +35,8 @@ void LimiterTess::drawLine3D(const glm::vec3& start, const glm::vec3& end, const
         return;
 
     auto* tessellator = screenContext3D->tessellator;
-    if (tessellator == nullptr)
+    auto* drawMaterial = material(onUi);
+    if (tessellator == nullptr || drawMaterial == nullptr)
         return;
     tessellator->begin(mce::PrimitiveMode::LineList);
 
@@ -53,7 +54,8 @@ void LimiterTess::drawLineList3D(
         return;
 
     auto* tessellator = screenContext3D->tessellator;
-    if (tessellator == nullptr)
+    auto* drawMaterial = material(onUi);
+    if (tessellator == nullptr || drawMaterial == nullptr)
         return;
     tessellator->begin(mce::PrimitiveMode::LineList,
         static_cast<int>(std::min<size_t>(lines.size() * 2, static_cast<size_t>(INT_MAX))));
@@ -78,7 +80,8 @@ void LimiterTess::drawFilledQuads3D(
         return;
 
     auto* tessellator = screenContext3D->tessellator;
-    if (tessellator == nullptr)
+    auto* drawMaterial = material(onUi);
+    if (tessellator == nullptr || drawMaterial == nullptr)
         return;
     tessellator->begin(mce::PrimitiveMode::QuadList,
         static_cast<int>(std::min<size_t>(quads.size() * 4, static_cast<size_t>(INT_MAX))));
@@ -111,7 +114,8 @@ void LimiterTess::drawBox3D(const glm::vec3& lower, const glm::vec3& upper, cons
         return;
 
     auto* tessellator = screenContext3D->tessellator;
-    if (tessellator == nullptr)
+    auto* drawMaterial = material(onUi);
+    if (tessellator == nullptr || drawMaterial == nullptr)
         return;
     const glm::vec3 difference = upper - lower;
     const glm::vec3 newLower = lower - origin;
