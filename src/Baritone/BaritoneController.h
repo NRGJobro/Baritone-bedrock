@@ -63,6 +63,9 @@ public:
     bool path();
     bool goTo(std::shared_ptr<Goal> goal);
     void stop();
+    // Reset planner/executor state without dereferencing Minecraft objects.
+    // Used when the current world/LocalPlayer may already have been destroyed.
+    void resetForWorldChange();
     void pause();
     void resume();
     void tick();
