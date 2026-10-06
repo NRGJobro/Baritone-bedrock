@@ -1,5 +1,7 @@
 #include "LevelRenderer.h"
 
+#include "LevelRendererPlayer.h"
+
 LevelRendererPlayer* LevelRenderer::getLevelRendererPlayer() {
     return hat::member_at<LevelRendererPlayer*>(this, 0x468);
 }
