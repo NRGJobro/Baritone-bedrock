@@ -1,13 +1,11 @@
 #pragma once
 
-#include "../Client/Font/Font.h"
-#include "../Client/MCE/Color.h"
-#include "CaretMeasureData.h"
-#include "ScreenContext.h"
-#include "TextMeasureData.h"
-
-namespace mce { class TextureGroup; }
+class Font;
+class ScreenContext;
 class ClientInstance;
+struct TextMeasureData;
+struct CaretMeasureData;
+namespace mce { class Color; class TextureGroup; }
 
 class MinecraftUIRenderContext {
     void** vtable;
