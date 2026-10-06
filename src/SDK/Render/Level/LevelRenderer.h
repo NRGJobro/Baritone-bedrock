@@ -1,6 +1,6 @@
 #pragma once
 
-#include "LevelRendererPlayer.h"
+class LevelRendererPlayer;
 
 class LevelRenderer {
 public:
