@@ -9,6 +9,7 @@ class DrawUtils {
 public:
     static void updateMCUIRC(MinecraftUIRenderContext* ctx);
     static void update(ScreenContext* ctx);
+    static void reset();
 
     static mce::MaterialPtr* getUIFillColor();
     static mce::MaterialPtr* getSelectionOverlay();
