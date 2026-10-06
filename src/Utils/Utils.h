@@ -22,12 +22,12 @@ public:
     template <uint32_t FuncIndex, typename ReturnType, typename... ArgsTypes>
     static auto CallVFunc(auto* instancePtr, ArgsTypes... argsList) -> ReturnType {
         using InstanceType = std::remove_pointer_t<decltype(instancePtr)>;
-        using FunctionType = ReturnType(InstanceType::*)(ArgsTypes...);
+        using FunctionType = ReturnType(*)(InstanceType*, ArgsTypes...);
 
         void* voidPtr = (*reinterpret_cast<void***>(instancePtr))[FuncIndex];
-        auto functionPtr = std::bit_cast<FunctionType>(voidPtr);
+        auto functionPtr = reinterpret_cast<FunctionType>(voidPtr);
 
-        return (instancePtr->*functionPtr)(argsList...);
+        return functionPtr(instancePtr, argsList...);
     }
 
     template <typename ret>

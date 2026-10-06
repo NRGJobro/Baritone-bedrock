@@ -3,6 +3,7 @@
 #include "../../Client.h"
 #include "../../SDK/Client/Input/MoveInputComponent.h"
 #include "../../SDK/MC.h"
+#include "../../SDK/World/Actor/LocalPlayer.h"
 
 GuiMoveModule::GuiMoveModule() : Module("Allows normal movement while inventory and supported GUI screens are open") {}
 

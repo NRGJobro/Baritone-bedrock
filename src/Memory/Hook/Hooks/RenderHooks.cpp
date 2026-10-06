@@ -9,6 +9,8 @@
 #include "../../../SDK/MC.h"
 #include "../../../SDK/Render/MinecraftUIRenderContext.h"
 #include "../../../SDK/Screen/ScreenView.h"
+#include "../../../SDK/Screen/UIControl.h"
+#include "../../../SDK/Screen/VisualTree.h"
 #include "../../../Utils/DrawUtils.h"
 #include "../../../Utils/LimiterTess.h"
 #include "../../../Utils/TimeUtils.h"
